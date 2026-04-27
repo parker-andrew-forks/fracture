@@ -1,0 +1,681 @@
+use crate::application_channel_creator::GpuChannelSide;
+use crate::global_application_state::SAFE_MODE;
+use crate::gpu_mirror_display::defaults::{APPLICATION_NAME, CROP_COLOR};
+use crate::gpu_mirror_display::input::events_mouse::ResizeInteractionsState;
+use crate::gpu_mirror_display::input::on_input_events;
+use crate::gpu_mirror_display::input::utility_mouse::remove_expired_mouse_events;
+use crate::gpu_mirror_display::overlay_ui::write_ui_data_to_buffer;
+use crate::gpu_mirror_display::pipeline_definitions::{
+    define_primary_pipeline, define_primary_sampler, select_caps_with_preferences,
+};
+use crate::gpu_mirror_display::postprocessing_shaders::{
+    define_postprocessing_mirror_shader, if_shader_compilation_requested,
+};
+use crate::gpu_mirror_display::render::on_redraw;
+use crate::gpu_mirror_display::state::{AdditionalRenderingState, DmaStartupChecks, State};
+use crate::gpu_mirror_display::utility_vertex::{VERTICES, Vertex};
+use crate::gpu_mirror_display::{binary_images, shutdown};
+use crate::ui_state::{
+    ScaleDecision, TitleBarDisplay, UiState, VideoAspect, VideoLocation, WindowBackground,
+    WindowBehaviour,
+};
+use lamco_wgpu::SupportedFormat;
+use std::mem;
+use std::num::NonZero;
+use wgpu::util::DeviceExt;
+use wgpu::{BufferDescriptor, BufferUsages, Extent3d};
+use winit::dpi::{LogicalSize, PhysicalSize};
+use winit::event::{Event, WindowEvent};
+use winit::platform::wayland::WindowBuilderExtWayland;
+use winit::{error::EventLoopError, event_loop::EventLoop, window::WindowBuilder};
+
+pub enum WrappedBridge {
+    Bridged(lamco_wgpu::WgpuBridge),
+    BridgedExplicitSync(lamco_wgpu::WgpuBridge),
+    Direct,
+}
+
+#[derive(Clone)]
+pub struct WebGpuReport {
+    pub formats: Option<Vec<SupportedFormat>>,
+}
+
+pub fn run_mirror_video_output_ui(channels: GpuChannelSide) -> Result<(), EventLoopError> {
+    let bridge = {
+        let mut bridge: WrappedBridge = WrappedBridge::Direct;
+
+        if let Err(_) = std::env::var(SAFE_MODE) {
+            match lamco_wgpu::bridge::WgpuBridge::new_with_explicit_sync() {
+                Ok(sync_bridge) => {
+                    bridge = WrappedBridge::BridgedExplicitSync(sync_bridge);
+                }
+                Err(_) => match lamco_wgpu::bridge::WgpuBridge::new() {
+                    Ok(no_sync) => bridge = WrappedBridge::Bridged(no_sync),
+                    _ => {}
+                },
+            }
+        }
+
+        bridge
+    };
+
+    match &bridge {
+        WrappedBridge::Bridged(bridge) | WrappedBridge::BridgedExplicitSync(bridge) => {
+            let report: Vec<SupportedFormat> = bridge
+                .supported_formats()
+                .iter()
+                .map(|v| v.clone())
+                .collect();
+
+            let report = WebGpuReport {
+                formats: Some(report),
+            };
+
+            channels.webgpu_drm_report.send(report).unwrap();
+
+            println!("Sync: {:?}", bridge.sync_capabilities())
+        }
+        WrappedBridge::Direct => println!("Sync: Direct Wgpu, no sync available"),
+    }
+
+    // before starting, wait for the video format
+    let video_format = channels.predicted_frame_fmt_receiver.recv().unwrap();
+
+    let ended = {
+        env_logger::init();
+        let event_loop = EventLoop::new().unwrap();
+        let window = {
+            let size = LogicalSize::new(video_format.width as f64, video_format.height as f64);
+            WindowBuilder::new()
+                .with_name(APPLICATION_NAME, APPLICATION_NAME)
+                .with_title(APPLICATION_NAME)
+                .with_transparent(true)
+                .with_inner_size(size)
+                .with_resizable(true)
+                .build(&event_loop)
+                .unwrap()
+        };
+
+        let overlay_dimensions = binary_images::ICON_SELECT_SCREEN_AREA.dimensions;
+
+        let instance = match &bridge {
+            WrappedBridge::Bridged(bridge) | WrappedBridge::BridgedExplicitSync(bridge) => {
+                bridge.instance.clone()
+            }
+            WrappedBridge::Direct => wgpu::Instance::new(&wgpu::InstanceDescriptor::default()),
+        };
+
+        let surface = instance.create_surface(&window).unwrap();
+
+        // todo: Maybe add the ability to switch adapters as a method for GPU selection
+        // let list: Vec<wgpu::Adapter> = instance.enumerate_adapters(wgpu::Backends::all());
+        // let list2: Vec<String> = list.iter().map(|v| v.get_info().name).collect();
+        // println!("{list2:#?}");
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+
+        let adapter = rt.block_on(async {
+            match &bridge {
+                WrappedBridge::Bridged(wgpu_bridge)
+                | WrappedBridge::BridgedExplicitSync(wgpu_bridge) => wgpu_bridge.adapter().clone(),
+                WrappedBridge::Direct => {
+                    let adapter = instance
+                        .request_adapter(&wgpu::RequestAdapterOptions {
+                            compatible_surface: Some(&surface),
+                            ..Default::default()
+                        })
+                        .await;
+
+                    match adapter {
+                        Ok(adapter) => adapter,
+                        Err(_) => instance
+                            .request_adapter(&wgpu::RequestAdapterOptions {
+                                compatible_surface: Some(&surface),
+                                force_fallback_adapter: true,
+                                ..Default::default()
+                            })
+                            .await
+                            .unwrap(),
+                    }
+                }
+            }
+        });
+
+        let (device, queue) = rt.block_on(async {
+            match &bridge {
+                WrappedBridge::Bridged(wgpu_bridge)
+                | WrappedBridge::BridgedExplicitSync(wgpu_bridge) => {
+                    (wgpu_bridge.device().clone(), wgpu_bridge.queue().clone())
+                }
+                WrappedBridge::Direct => adapter
+                    .request_device(&wgpu::DeviceDescriptor::default())
+                    .await
+                    .unwrap(),
+            }
+        });
+
+        #[cfg(not(debug_assertions))]
+        {
+            // There are slight validation errors, as an example, a known 1 is that
+            // if the streaming window is resized above the size that Gnome initiated for the screen
+            // recorder, then wgpu queue validation will panic with
+            //
+            /*
+               wgpu error: Validation Error
+
+               Caused by:
+               In Queue::write_texture
+                   Number of bytes per row is less than the number of bytes in a complete row
+            */
+            //
+            // When an error scope is added, adding a filter prevents wgpu from causing a panic for
+            // the selected error type. It's left out for debug builds so that it's easily known
+            // that there's something THAT IS WRONG, but added for release builds because
+            // it should provide better application stability without significantly impacting expected
+            // functionality.
+
+            let uncap_err_handler: std::sync::Arc<Box<dyn wgpu::UncapturedErrorHandler>> =
+                std::sync::Arc::new(Box::new(|err| {
+                    println!("wgpu err: {err:#?}");
+                }));
+
+            device.on_uncaptured_error(uncap_err_handler);
+
+            // device.push_error_scope(wgpu::ErrorFilter::Validation);
+        }
+
+        let surface_caps = surface.get_capabilities(&adapter);
+
+        let selected_surface_capabilities =
+            select_caps_with_preferences(surface_caps, video_format.format);
+        // surface_caps.
+        /*         let surface_caps = surface.get_capabilities(&adapter);
+         */
+        /*     let surface_format = surface_caps
+                   .formats
+                   .iter()
+                   .find(|f| f.is_srgb())
+                   .copied()
+                   .unwrap_or(surface_caps.formats[0]);
+        */
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format: selected_surface_capabilities.texture, //surface_format,
+            width: video_format.width,
+            height: video_format.height,
+            // Mailbox seems to have the best performance, but it also significantly raises GPU
+            // utilization. AutoVsync performs OK, but the playback is not smooth. I need to spend
+            // more time attempting to optimize the pipeline.
+            present_mode: selected_surface_capabilities.present,
+
+            alpha_mode: selected_surface_capabilities.alpha, //surface_caps.alpha_modes[0],
+            view_formats: vec![],
+            desired_maximum_frame_latency: 2,
+        };
+
+        let size = PhysicalSize::new(video_format.width as u32, video_format.height as u32);
+
+        let shader = rt
+            .block_on(define_postprocessing_mirror_shader(&device, None))
+            .unwrap();
+
+        // println!("{:}", shader.extract_postprocessor());
+
+        let shader = shader.device_module;
+
+        let shader2 = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/ui.wgsl").into()),
+        });
+
+        surface.configure(&device, &config);
+
+        const INDICES: &[u16] = &[2, 3, 1, 2, 1, 0];
+
+        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Index Buffer"),
+            contents: bytemuck::cast_slice(INDICES),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+
+        let num_indices = INDICES.len() as u32;
+
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Vertex Buffer"),
+            contents: bytemuck::cast_slice(VERTICES),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
+        let vertex_buffer2 = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Vertex Buffer"),
+            contents: bytemuck::cast_slice(VERTICES),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
+        surface.configure(&device, &config);
+
+        let texture_size = wgpu::Extent3d {
+            width: 500,
+            height: 500,
+            depth_or_array_layers: 1,
+        };
+
+        let overlay_text = device.create_texture(&wgpu::TextureDescriptor {
+            size: texture_size,
+            mip_level_count: 1,
+
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+
+            format: wgpu::TextureFormat::Bgra8Unorm,
+
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            label: Some("diffuse_texture"),
+
+            view_formats: &[],
+        });
+
+        let diffuse_texture = device.create_texture(&wgpu::TextureDescriptor {
+            size: wgpu::Extent3d {
+                width: video_format.width,
+                height: video_format.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+
+            format: video_format.format,
+
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            label: Some("diffuse_texture"),
+
+            view_formats: &[],
+        });
+
+        let overlay_text_view = overlay_text.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let diffuse_texture_view =
+            diffuse_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let mut diffuse_sampler = define_primary_sampler(
+            &device,
+            crate::ui_state::DEFAULT_MAGNIFY_FILTER,
+            crate::ui_state::DEFAULT_MINIFY_FILTER,
+        );
+
+        let texture_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: NonZero::new(68u64),
+                        },
+                        count: None,
+                    },
+                ],
+                label: Some("texture_bind_group_layout"),
+            });
+
+        let ui_flags = device.create_buffer(&BufferDescriptor {
+            label: None,
+            size: 68,
+            usage: BufferUsages::COPY_DST | BufferUsages::UNIFORM,
+            mapped_at_creation: false,
+        });
+
+        let diffuse_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&diffuse_texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&diffuse_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&overlay_text_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Buffer(ui_flags.as_entire_buffer_binding()),
+                },
+            ],
+            label: Some("diffuse_bind_group"),
+        });
+
+        let render_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Render Pipeline Layout"),
+                bind_group_layouts: &[&texture_bind_group_layout],
+                // push_constant_ranges: &[],
+                immediate_size: 0,
+            });
+
+        let render_pipeline =
+            define_primary_pipeline(&device, &shader, &render_pipeline_layout, &config.format);
+
+        let render_pipeline2 = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Render Pipeline"),
+            layout: Some(&render_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader2,
+                entry_point: Some("vs_main"), // 1.
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &[
+                        wgpu::VertexAttribute {
+                            offset: 0,
+                            shader_location: 0,
+                            format: wgpu::VertexFormat::Float32x3,
+                        },
+                        wgpu::VertexAttribute {
+                            offset: mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
+                            shader_location: 1,
+                            format: wgpu::VertexFormat::Float32x2,
+                        },
+                    ],
+                }],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader2,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back),
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
+
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            // multiview: None,
+            cache: None,
+            multiview_mask: None,
+        });
+
+        let overlay_size = Extent3d {
+            width: overlay_dimensions.width,
+            height: overlay_dimensions.height,
+            depth_or_array_layers: 1,
+        };
+
+        write_ui_data_to_buffer(
+            &queue,
+            window.inner_size(),
+            (0, 0),
+            (0, 0),
+            &ui_flags,
+            0.0,
+            &vec![],
+            (0, 0),
+            None,
+            None,
+        );
+
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &overlay_text,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &binary_images::ICON_SELECT_SCREEN_AREA.data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * 500),
+                rows_per_image: Some(500),
+            },
+            overlay_size,
+        );
+
+        let mut state = State {
+            surface,
+            queue,
+            config,
+            mirror_output_rendering_pipeline: render_pipeline,
+            mirror_fractured_texture: device.create_texture(&wgpu::TextureDescriptor {
+                size: Extent3d {
+                    width: size.width,
+                    height: size.height,
+                    depth_or_array_layers: 1,
+                },
+
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: video_format.format, //wgpu::TextureFormat::Bgra8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                label: Some("mirror_placeholder"),
+                view_formats: &[],
+            }),
+            size: size,
+            window: &window,
+            device: device,
+            vertex_buffer,
+            index_buffer,
+            num_indices,
+            diffuse_bind_group,
+            ui_rendering_pipeline: render_pipeline2,
+            vertex_buffer2: vertex_buffer2,
+            used_video_format: video_format.clone(),
+            wrapping_render_count: 0,
+            bridge,
+            last_fracture_display_origin: Default::default(),
+            first_dma_sent: false,
+            last_fracture_dimensions: Default::default(),
+            last_reported_offsets: (0, 0),
+            dma_startup_checks: DmaStartupChecks {
+                is_complete: false,
+                is_fail: false,
+                frames_checked: 0,
+                frames_without_data: std::sync::Arc::new(std::sync::Mutex::new(0)),
+                frames_with_data: std::sync::Arc::new(std::sync::Mutex::new(0)),
+                fail_at: 30,
+                dma_error_count: 0,
+            },
+        };
+
+        let mut additional_state = AdditionalRenderingState {
+            mouse_clicks: vec![],
+            mouse_downs: vec![],
+            new_settings: true,
+            last_surface_size: state.window.inner_size(),
+            last_frame_size: (0, 0),
+            mouse_over_screen: false,
+            mouse_is_down: false,
+            mouse_select_start: (0, 0),
+            in_crop_selection: true,
+            cropped: None,
+            crop_button_pressed: true,
+            last_known_mouse_position: (0, 0),
+            settings_state: UiState {
+                display_title: TitleBarDisplay::TitleBarVisible,
+                aspect_ratio: VideoAspect::MaintainAspectRatio(
+                    ScaleDecision::DontScale,
+                    WindowBehaviour::SizeSetByUser(VideoLocation::Center),
+                ),
+                frame_transparency: 100.0,
+                need_rebuild: true,
+                updated: true,
+                open_settings_ui: None,
+                green_screen: crate::ui_state::GreenScreen::None,
+                postprocessor: Default::default(),
+                background: WindowBackground::Color(
+                    CROP_COLOR.0,
+                    CROP_COLOR.1,
+                    CROP_COLOR.2,
+                    CROP_COLOR.3,
+                ),
+                ..Default::default()
+            },
+            channels,
+            mouse_resize_state: ResizeInteractionsState::None,
+            keep_borders: false,
+        };
+
+        additional_state
+            .channels
+            .gpu_sender_request
+            .send(additional_state.settings_state.clone())
+            .unwrap();
+
+        state.resize(state.window.inner_size());
+
+        let res = event_loop.run(move |event, elwt| {
+            while let Ok(new) = additional_state.channels.new_settings_receiver.try_recv() {
+                // This is expensive, but needs to happen or the image will become distorted.
+                state.resize(state.window.inner_size());
+
+                additional_state.settings_state = new;
+                additional_state.new_settings = true;
+
+                if additional_state
+                    .settings_state
+                    .should_define_new_primary_sampler
+                {
+                    diffuse_sampler = define_primary_sampler(
+                        &state.device,
+                        additional_state.settings_state.magnify_filter,
+                        additional_state.settings_state.minify_filter,
+                    );
+
+                    additional_state
+                        .settings_state
+                        .should_define_new_primary_sampler = false;
+
+                    additional_state
+                        .channels
+                        .gpu_sender_request
+                        .send(additional_state.settings_state.clone())
+                        .unwrap();
+                }
+            }
+
+            match &event {
+                Event::WindowEvent {
+                    window_id: _,
+                    event,
+                } => match event {
+                    WindowEvent::RedrawRequested => on_redraw(
+                        &mut state,
+                        &mut additional_state,
+                        elwt,
+                        &diffuse_sampler,
+                        &ui_flags,
+                        &texture_bind_group_layout,
+                    ),
+                    WindowEvent::CloseRequested => {
+                        shutdown::shutdown(elwt, &state, &additional_state);
+
+                        return;
+                    }
+                    WindowEvent::Focused(false) => {
+                        {
+                            // So, after cropping, the application started resizing when losing
+                            // focus to the last dragged window size. When searching on Google, the
+                            // response provided was
+                            //
+                            //      Windows resizing or shrinking upon losing focus in Wayland is
+                            //      often caused by Client-Side Decorations (CSD) acting
+                            //      incorrectly, where the window shrinks to match reduced shadows wh...
+                            //
+                            // I really don't know where I went wrong, if I even made a mistake... So the hack
+                            // to fix this issue is to resize the window when the focus is lost to make
+                            // sure it matches the last known size the application detected. (As something
+                            // is resizing the window when the focus is lost)
+
+                            state
+                                .window
+                                .request_inner_size(additional_state.last_surface_size)
+                                .unwrap();
+                        }
+                    }
+
+                    _ => on_input_events(event, &state, &mut additional_state),
+                },
+
+                _ => {}
+            }
+
+            if additional_state.new_settings {
+                if let TitleBarDisplay::TitleBarVisible =
+                    &additional_state.settings_state.display_title
+                {
+                    state.window.set_decorations(true);
+                } else {
+                    state.window.set_decorations(false);
+                }
+
+                if_shader_compilation_requested(
+                    &rt,
+                    &mut state,
+                    &mut additional_state,
+                    &render_pipeline_layout,
+                );
+            }
+
+            remove_expired_mouse_events(&mut additional_state);
+
+            additional_state.new_settings = false;
+        });
+
+        res
+    };
+
+    ended
+}

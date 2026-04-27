@@ -1,0 +1,7 @@
+/target
+/flatpak/repo/*
+/flatpak/builddir/*
+/flatpak/.flatpak-builder/*
+/flatpak/slashshade
+/flatpak/launcher
+/flatpak/org.flatpak.slashshade-test.flatpak

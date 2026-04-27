@@ -1,0 +1,104 @@
+use std::env;
+
+use application_channel_creator::ApplicationChannelsCreator;
+use global_application_state::DESKTOP_ENV_IS_GNOME;
+use gpu_mirror_display::event_loop::run_mirror_video_output_ui;
+use gtk_user_interfaces::{
+    install_ui::{self},
+    settings_ui::run_settings_ui,
+};
+use notify_rust::Notification;
+use stream_creation::start_mirror_stream::start_mirroring;
+
+use crate::global_application_state::SAFE_MODE;
+
+pub mod application_channel_creator;
+pub mod global_application_state;
+pub mod gpu_mirror_display;
+pub mod gtk_user_interfaces;
+pub mod shaders;
+pub mod stream_creation;
+pub mod ui_state;
+
+fn main() {
+    // This is a hack until I fix it... For my device, the GDK_BACKEND is set to x11 and I don't know why...
+    //
+    // If the GDK_BACKEND needs to be set then set the FORCE_OVERRIDE_GDK value in the environment and it won't be changed.
+    {
+        if let Err(_) = env::var("FORCE_OVERRIDE_GDK") {
+            unsafe {
+                env::remove_var("GDK_BACKEND");
+
+                // The problem is that my environment is somehow setting the GDK_BACKEND=x11
+                // when it supposed to be GDK_BACKEND=wayland. If it's changed to wayland, it works,
+                // but, wayland isn't necessarily the default GDK would use. GTK attempts to detect the
+                // best available otpion if it's not set, so by removing the environmental variable,
+                // GTK will try to set the best option itself.
+
+                // env::set_var("GDK_BACKEND", "wayland");
+            }
+        }
+    }
+
+    let (gpu, ui, dbus) = ApplicationChannelsCreator::channels();
+    let (send_init_complete, init_complete) = std::sync::mpsc::channel::<()>();
+
+    let gtk_user_interfaces_handle = std::thread::spawn(move || {
+        if *DESKTOP_ENV_IS_GNOME {
+            let _startup_result = install_ui::gtk_installer_launcher();
+        }
+
+        let _ = send_init_complete.send(());
+
+        let conf = ui.shutdown_confirmed.clone();
+        run_settings_ui(ui);
+        let _ = conf.send(());
+    });
+
+    init_complete.recv().unwrap();
+
+    let window_recording_handle = std::thread::spawn(|| {
+        let focussed = {
+            match env::var(SAFE_MODE) {
+                Err(_) => {
+                    let windows = match gnome_window_calls::abstraction::Windows::list() {
+                        Ok(windows) => windows,
+                        Err(e) => {
+                            if *DESKTOP_ENV_IS_GNOME {
+                                let msg = format!(
+                                    "{} \r\n\r\n{e:?}\r\n\r\n{}",
+                                    "Window access failed. If it normally works, try rebooting.",
+                                    "The most common reason for this failure is that Gnome Shell Extensions were updated and Gnome Shell needs to restart before this extension can function normally again"
+                                );
+
+                                println!("{msg}");
+
+                                Notification::new()
+                                    .body(&msg)
+                                    .summary("Failed to start")
+                                    .show()
+                                    .unwrap();
+                            }
+
+                            vec![]
+                        }
+                    };
+
+                    let focussed = windows.into_iter().find(|v| v.cache.focus.unwrap_or(false));
+
+                    focussed
+                }
+                Ok(_) => None,
+            }
+        };
+
+        let conf = dbus.shutdown_confirmed.clone();
+        start_mirroring(focussed, dbus);
+        let _ = conf.send(());
+    });
+
+    run_mirror_video_output_ui(gpu).expect("The window should always successfully run.");
+
+    window_recording_handle.join().unwrap();
+    gtk_user_interfaces_handle.join().unwrap();
+}

@@ -1,0 +1,12 @@
+fn postprocess(in_color: vec4<f32>, in: VertexOutput, data: UiRenderData) -> vec4<f32> {
+    var x = 1.0 - in.tex_coords.x;
+    var y = in.tex_coords.y;
+    var color = alpha_sample(vec2(x, y));
+
+    // The texture on the GPU is directly from the cropped area of the window. 
+    // Since the color is sampled again to get a different area of the texture, the 
+    // the color returned hasn't had preprocessing completed from the settings. 
+    color = preprocessing(color);
+
+    return color;
+}

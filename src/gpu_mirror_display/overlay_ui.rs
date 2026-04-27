@@ -1,0 +1,400 @@
+use super::{
+    START_TIME, binary_images,
+    input::utility_mouse::{first_in_range, found_remove_mouse_click, mouse_in_img_bounds},
+    shutdown,
+    state::{AdditionalRenderingState, State},
+    utility_texture::write_image_to_texture,
+    window_cropping::start_crop_selection,
+};
+use crate::ui_state::{RemoveColors, TitleBarDisplay, UiState};
+use wgpu::{Extent3d, Queue, TextureDescriptor, TextureView, TextureViewDescriptor};
+use winit::{dpi::PhysicalSize, event_loop::EventLoopWindowTarget};
+
+/// The name is misleading, this writes the UI textures, but it also handles clicking on the UI
+/// because the logic is easier to follow when both of these are done together. An improved UI system
+/// would likely define types like buttons and then the rendering system would handle rendering those buttons,
+/// but that's a lot more, and this application hopefully won't need a complex UI system.
+pub fn write_ui_texture_and_handle_ui_actions(
+    additional: &mut AdditionalRenderingState,
+    state: &mut State,
+    surface_size: PhysicalSize<u32>,
+    wt: &EventLoopWindowTarget<()>,
+) -> TextureView {
+    // let state: &State = state;
+    let ui_settings: &UiState = &additional.settings_state.clone();
+    // let crop_button_pressed: &bool = &additional.crop_button_pressed;
+    let _mouse_position @ (mouse_x, mouse_y): &(u32, u32) =
+        &additional.last_known_mouse_position.clone();
+    let _surface_size @ PhysicalSize { width, height }: PhysicalSize<u32> = surface_size;
+
+    let (mouse_x, mouse_y) = (*mouse_x as i32, *mouse_y as i32);
+    let mouse_position = &(mouse_x, mouse_y);
+    let texture = state.device.create_texture(&TextureDescriptor {
+        label: Some("overlays"),
+        size: Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+
+    let mut found_hover = false;
+
+    if *&additional.crop_button_pressed {
+        let x: i32 = (width as i32 / 2)
+            - (binary_images::ICON_SELECT_SCREEN_AREA.dimensions.width / 2) as i32;
+        let y: i32 = (height as i32 / 2)
+            - (binary_images::ICON_SELECT_SCREEN_AREA.dimensions.height / 2) as i32;
+
+        write_image_to_texture(
+            state,
+            &texture,
+            &binary_images::ICON_SELECT_SCREEN_AREA,
+            (x, y),
+        );
+    } else if *&additional.mouse_over_screen {
+        // settings button
+        {
+            let img_position = (
+                0 as i32 + ((0 as i32 + 10) * 1),
+                height as i32 - (binary_images::ICON_PIP_NO_FILL.dimensions.height as i32 + 5 * 1),
+            );
+
+            if mouse_in_img_bounds(
+                &mouse_position,
+                &img_position,
+                &binary_images::ICON_GEAR_NO_FILL,
+                &mut found_hover,
+            ) {
+                write_image_to_texture(
+                    state,
+                    &texture,
+                    &binary_images::ICON_GEAR_FILL,
+                    img_position,
+                );
+            } else {
+                write_image_to_texture(
+                    state,
+                    &texture,
+                    &binary_images::ICON_GEAR_NO_FILL,
+                    img_position,
+                );
+            }
+
+            if found_remove_mouse_click(
+                &mut additional.mouse_clicks,
+                &img_position,
+                &binary_images::ICON_GEAR_NO_FILL,
+            ) {
+                let mut current = additional.settings_state.clone();
+                current.open_settings_ui = Some(true);
+                additional
+                    .channels
+                    .gpu_sender_request
+                    .send(current)
+                    .expect("Settings thread stays");
+                additional
+                    .channels
+                    .start_settings_ui
+                    .send(())
+                    .expect("Thread should stay open for entire program duration.");
+            }
+        }
+
+        // crop button
+        {
+            let img_position = (
+                0 as i32
+                    + ((10 + binary_images::ICON_PIP_NO_FILL.dimensions.height as i32 + 10) * 1),
+                height as i32 - (binary_images::ICON_PIP_NO_FILL.dimensions.height as i32 + 5 * 1),
+            );
+
+            if mouse_in_img_bounds(
+                &mouse_position,
+                &img_position,
+                &binary_images::ICON_PIP_NO_FILL,
+                &mut found_hover,
+            ) {
+                write_image_to_texture(
+                    state,
+                    &texture,
+                    &binary_images::ICON_PIP_FILL,
+                    img_position,
+                );
+            } else {
+                write_image_to_texture(
+                    state,
+                    &texture,
+                    &binary_images::ICON_PIP_NO_FILL,
+                    img_position,
+                );
+            }
+
+            if found_remove_mouse_click(
+                &mut additional.mouse_clicks,
+                &img_position,
+                &binary_images::ICON_PIP_NO_FILL,
+            ) {
+                start_crop_selection(additional, state);
+            }
+        }
+    }
+
+    if *&additional.mouse_over_screen {
+        if let TitleBarDisplay::HiddenTitleBar = ui_settings.display_title {
+            // exit button
+            {
+                let img_position = (width as i32 - (35 * 1), 10);
+
+                if mouse_in_img_bounds(
+                    &mouse_position,
+                    &img_position,
+                    &binary_images::ICON_EXIT_NO_FILL,
+                    &mut found_hover,
+                ) {
+                    write_image_to_texture(
+                        state,
+                        &texture,
+                        &binary_images::ICON_EXIT_FILL,
+                        img_position,
+                    );
+                } else {
+                    write_image_to_texture(
+                        state,
+                        &texture,
+                        &binary_images::ICON_EXIT_NO_FILL,
+                        img_position,
+                    );
+                }
+
+                if found_remove_mouse_click(
+                    &mut additional.mouse_clicks,
+                    &img_position,
+                    &binary_images::ICON_EXIT_NO_FILL,
+                ) {
+                    shutdown::shutdown(&wt, &state, &additional);
+                }
+            }
+
+            // maximize button
+            {
+                let img_position = (width as i32 - (35 * 2), 10);
+
+                if mouse_in_img_bounds(
+                    &mouse_position,
+                    &img_position,
+                    &binary_images::ICON_SQUARE_NO_FILL,
+                    &mut found_hover,
+                ) {
+                    write_image_to_texture(
+                        state,
+                        &texture,
+                        &binary_images::ICON_SQUARE_FILL,
+                        img_position,
+                    );
+                } else {
+                    write_image_to_texture(
+                        state,
+                        &texture,
+                        &binary_images::ICON_SQUARE_NO_FILL,
+                        img_position,
+                    );
+                }
+
+                if found_remove_mouse_click(
+                    &mut additional.mouse_clicks,
+                    &img_position,
+                    &binary_images::ICON_SQUARE_NO_FILL,
+                ) {
+                    if !state.window.is_maximized() {
+                        state.window.set_maximized(true);
+                    } else {
+                        state.window.set_maximized(false);
+                    }
+                }
+            }
+
+            // minimize button
+            {
+                let img_position = (width as i32 - (35 * 3), 10);
+
+                if mouse_in_img_bounds(
+                    &mouse_position,
+                    &img_position,
+                    &binary_images::ICON_MINIMIZE_NO_FILL,
+                    &mut found_hover,
+                ) {
+                    write_image_to_texture(
+                        state,
+                        &texture,
+                        &binary_images::ICON_MINIMIZE_FILL,
+                        img_position,
+                    );
+                } else {
+                    write_image_to_texture(
+                        state,
+                        &texture,
+                        &binary_images::ICON_MINIMIZE_NO_FILL,
+                        img_position,
+                    );
+                }
+
+                if found_remove_mouse_click(
+                    &mut additional.mouse_clicks,
+                    &img_position,
+                    &binary_images::ICON_MINIMIZE_NO_FILL,
+                ) {
+                    state.window.set_minimized(true);
+                }
+            }
+        }
+
+        if !*&additional.crop_button_pressed {
+            if !found_hover {
+                if let Some(idx) = first_in_range(
+                    &mut additional.mouse_downs,
+                    &((0, 0), ((width as i32), (height as i32))),
+                ) {
+                    let _ = state.window.drag_window();
+                    additional.mouse_downs.remove(idx);
+                }
+            }
+        }
+    }
+
+    texture.create_view(&TextureViewDescriptor::default())
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum UiFlag {
+    #[allow(unused)]
+    NoFlag = 0,
+    DisplayOverlays = 1 << 0,
+    MouseOverWindow = 1 << 1,
+    MouseDown = 1 << 2,
+    WaitingForCrop = 1 << 3,
+    OnlyAngles = 1 << 4,
+    KeepBorders = 1 << 5,
+    UseGreenScreen = 1 << 6,
+}
+
+#[derive(Clone, Debug)]
+
+pub struct UiRenderData {
+    flagged: Vec<UiFlag>,
+    transparency: f32,
+    mouse_position: (u32, u32),
+    surface_dimensions: (u32, u32),
+    mouse_select_start: (u32, u32),
+    mirror_out_start: (u32, u32),
+    mirror_out_end: (u32, u32),
+    greenscreen: Option<RemoveColors>,
+}
+
+impl Into<u32> for UiFlag {
+    fn into(self) -> u32 {
+        self as u32
+    }
+}
+
+impl Into<Vec<u8>> for UiRenderData {
+    fn into(self) -> Vec<u8> {
+        let data: u32 = self
+            .flagged
+            .iter()
+            .map(|v| (*v).into())
+            .fold(0, |a, i: u32| a | i);
+
+        let RemoveColors {
+            base_color: (gs_r, gs_g, gs_b),
+            sensitivity: gs_sensitivity,
+        } = if let Some(v) = self.greenscreen {
+            v
+        } else {
+            RemoveColors {
+                base_color: (0.0, 0.0, 0.0),
+                sensitivity: (0.0),
+            }
+        };
+
+        let time = START_TIME.elapsed().as_secs_f32();
+
+        let mut time = time.to_le_bytes().to_vec();
+        let mut gs_r = gs_r.to_le_bytes().to_vec();
+        let mut gs_g = gs_g.to_le_bytes().to_vec();
+        let mut gs_b = gs_b.to_le_bytes().to_vec();
+        let mut gs_sensitivity = gs_sensitivity.to_le_bytes().to_vec();
+
+        let mut surface_end_x: Vec<u8> = self.mirror_out_end.0.to_le_bytes().to_vec();
+        let mut surface_end_y = self.mirror_out_end.1.to_le_bytes().to_vec();
+        let mut surface_start_x = self.mirror_out_start.0.to_le_bytes().to_vec();
+        let mut surface_start_y = self.mirror_out_start.1.to_le_bytes().to_vec();
+        let mut select_x = self.mouse_select_start.0.to_le_bytes().to_vec();
+        let mut select_y = self.mouse_select_start.1.to_le_bytes().to_vec();
+        let mut surface_w = self.surface_dimensions.0.to_le_bytes().to_vec();
+        let mut surface_h = self.surface_dimensions.1.to_le_bytes().to_vec();
+        let mut mouse_x = self.mouse_position.0.to_le_bytes().to_vec();
+        let mut mouse_y = self.mouse_position.1.to_le_bytes().to_vec();
+        let mut transparency = self.transparency.to_le_bytes().to_vec();
+        let mut flags = data.to_le_bytes().to_vec();
+
+        flags.append(&mut transparency);
+        flags.append(&mut mouse_y);
+        flags.append(&mut mouse_x);
+        flags.append(&mut surface_h);
+        flags.append(&mut surface_w);
+        flags.append(&mut select_y);
+        flags.append(&mut select_x);
+        flags.append(&mut surface_start_x);
+        flags.append(&mut surface_start_y);
+        flags.append(&mut surface_end_x);
+        flags.append(&mut surface_end_y);
+        flags.append(&mut gs_r);
+        flags.append(&mut gs_g);
+        flags.append(&mut gs_b);
+        flags.append(&mut gs_sensitivity);
+        flags.append(&mut time);
+
+        flags
+    }
+}
+
+pub fn write_ui_data_to_buffer(
+    queue: &Queue,
+    _surface_size @ PhysicalSize { width, height }: PhysicalSize<u32>,
+    mouse: (u32, u32),
+    mouse_select_start: (u32, u32),
+    buffer: &wgpu::Buffer,
+    transparency: f32,
+    flags: &Vec<UiFlag>,
+    (surface_start_x, surface_start_y): (u32, u32),
+    defined_ends: Option<(u32, u32)>,
+    settings: Option<RemoveColors>,
+) {
+    let (s_end_x, s_end_y) = if let Some(val) = defined_ends {
+        val
+    } else {
+        (width, height)
+    };
+
+    let temp = UiRenderData {
+        flagged: flags.clone(),
+        transparency: transparency / 100.0,
+        mouse_position: mouse,
+        surface_dimensions: (width, height),
+        mouse_select_start: mouse_select_start,
+        mirror_out_start: (surface_start_x, surface_start_y),
+        mirror_out_end: (s_end_x, s_end_y),
+        greenscreen: settings,
+    };
+
+    let temp: Vec<u8> = temp.into();
+
+    queue.write_buffer(&buffer, 0, &temp);
+}

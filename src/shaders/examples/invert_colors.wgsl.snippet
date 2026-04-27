@@ -1,0 +1,6 @@
+fn postprocess(in_color: vec4<f32>, in: VertexOutput, data: UiRenderData) -> vec4<f32> {
+	var color = in_color;
+	color = vec4(1.0 - color.r, 1.0 - color.g, 1.0 - color.b, color.a);
+
+	return color;
+}

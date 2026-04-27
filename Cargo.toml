@@ -1,0 +1,46 @@
+[package]
+name = "fracture"
+rust-version = "1.92"
+version = "0.0.1"
+edition = "2024"
+
+[features]
+default = []
+flatpak=["gnome-custom-keybindings/flatpak"]
+
+[dependencies]
+ashpd = "0.10.2"
+bytemuck = { version = "1.16", features = ["derive"] }
+dbus = "0.9.7"
+env_logger = "0.10"
+gtk4 = {  version="0.11.0", features=["v4_12"]}
+naga = {version="28.0.0",  features=["wgsl-out"]}
+pipewire = {version="0.8.0",  features=["v0_3_33"]}
+serde = {version="1.0.215",features = ["derive"]}
+serde_json = "1.0.133"
+tokio = {version="1.41.1", features=["rt"]}
+wgpu = {version="28.0.0", features=["naga-ir", "serde"]}
+winit = "0.29"
+wgsl-formatter = {git="https://github.com/parker-andrew-forks/wgsl-analyzer.git", rev="3d5590767e816bdf2d6f5c7c9b304632006a1631"}
+lamco-wgpu = { git = "https://github.com/parker-andrew-forks/wgpu-bridge.git", rev="9b07732d9ded19df1ef35647236fd99bb3ce0bba"}
+open = "5.3.2"
+rand = {version="0.9"}
+notify-rust = "4.11.6"
+detect-desktop-environment = "1.2.0"
+drm-fourcc = "2.2.0"
+smithay-client-toolkit = "0.19.2"
+wayland-client = "0.31.8"
+wayland-protocols = "0.32.6"
+image = "0.25.9"
+futures-intrusive = "0.5.0"
+smithay = { git = "https://github.com/parker-andrew-forks/smithay.git", rev = "94687f51cb7a4c57559f5f5f72aa1c68a60ea940", default-features = false, features = [
+    "renderer_gl",
+    "backend_drm",
+    "backend_gbm",
+    "backend_vulkan",
+    "wayland_frontend",
+] }
+mmap = "0.1.1"
+reqwest = {version  = "0.13.2", features=["blocking"]}
+gnome_window_calls = "0.1.0"
+gnome-custom-keybindings = "0.1.0"

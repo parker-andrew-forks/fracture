@@ -1,0 +1,9 @@
+fn postprocess(in_color: vec4<f32>, in: VertexOutput, data: UiRenderData) -> vec4<f32> {
+	var shift = (data.time / 3.0) % 1.0;
+	var x = (in.tex_coords.x + shift) % 1.0;
+
+	var color = alpha_sample(vec2(x, in.tex_coords.y));
+	color = preprocessing(color);
+
+	return color;
+}

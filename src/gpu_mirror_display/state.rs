@@ -1,0 +1,149 @@
+use super::{
+    input::events_mouse::ResizeInteractionsState, overlay_ui::UiFlag, window_cropping::CroppedArea,
+};
+use crate::{
+    application_channel_creator::GpuChannelSide,
+    gpu_mirror_display::event_loop::WrappedBridge,
+    stream_creation::utility_gnome_video_frame::PredictedWgpuFrameFormat,
+    ui_state::{GreenScreen, TitleBarDisplay, UiState, VideoAspect, WindowBehaviour},
+};
+use std::time::{Duration, SystemTime};
+use winit::{dpi::PhysicalSize, window::Window};
+
+#[derive(Debug, Clone)]
+pub struct DmaStartupChecks {
+    pub is_complete: bool,
+    pub is_fail: bool,
+    pub frames_checked: u32,
+    pub frames_without_data: std::sync::Arc<std::sync::Mutex<u32>>,
+    pub frames_with_data: std::sync::Arc<std::sync::Mutex<u32>>,
+    pub dma_error_count: u32,
+    pub fail_at: u32,
+}
+
+pub struct State<'a> {
+    pub surface: wgpu::Surface<'a>,
+    pub device: wgpu::Device,
+    pub queue: wgpu::Queue,
+    pub config: wgpu::SurfaceConfiguration,
+    pub size: winit::dpi::PhysicalSize<u32>,
+    pub window: &'a Window,
+    pub mirror_output_rendering_pipeline: wgpu::RenderPipeline,
+    pub mirror_fractured_texture: wgpu::Texture,
+    pub ui_rendering_pipeline: wgpu::RenderPipeline,
+    pub vertex_buffer: wgpu::Buffer,
+    pub vertex_buffer2: wgpu::Buffer,
+    pub index_buffer: wgpu::Buffer,
+    pub num_indices: u32,
+    pub diffuse_bind_group: wgpu::BindGroup,
+    pub used_video_format: PredictedWgpuFrameFormat,
+    pub wrapping_render_count: u32,
+    pub bridge: WrappedBridge,
+    pub first_dma_sent: bool,
+    /// Sometimes, I'm writing pixels directly to a texture that will always be the same size as the window.
+    ///
+    /// Then, sometimes, I'm writing pixels to a texture that will be transformed into the size of the window.
+    ///
+    /// This origin is from that texture.
+    pub last_fracture_display_origin: wgpu::Origin3d,
+    pub last_fracture_dimensions: wgpu::Extent3d,
+    pub last_reported_offsets: (u32, u32),
+
+    pub dma_startup_checks: DmaStartupChecks,
+}
+
+impl<'a> State<'a> {
+    pub fn window(&self) -> &Window {
+        &self.window
+    }
+
+    pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
+        if new_size.width > 0 && new_size.height > 0 {
+            self.size = new_size;
+            self.config.width = new_size.width;
+            self.config.height = new_size.height;
+            self.surface.configure(&self.device, &self.config);
+
+            // This is a hack.
+            //
+            // Using configure on the GPU pipeline is expensive and causes it to block or queue
+            // frames until all of the configuration calls are completed. When resizing the window,
+            // calls to configure stack up rapidly which somehow results in what seems like a frame
+            // queue of several hundred frames or more...
+            //
+            // Anyway, blocking the rendering thread for 10 milliseconds seems to prevent rapid calling
+            // the configure function during window resizing.
+            //
+            // Note: 1000 ms / 10 ms = 100 FPS~
+            //
+            // It shouldn't be very percetible as the blocking time is less than the a normal FPS (ex. 60 FPS),
+            // but I think the configure call on the GPU pipeline (surface) is perceptible. Maybe someone running at
+            // very high FPS (like 120-300+) would notice it when resizing a window, but they'd probably have to be
+            // looking for it.
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+
+pub struct AdditionalRenderingState {
+    pub mouse_clicks: Vec<((u32, u32), SystemTime)>,
+    pub mouse_downs: Vec<((u32, u32), SystemTime)>,
+    pub new_settings: bool,
+    pub last_surface_size: PhysicalSize<u32>,
+    pub last_frame_size: (u32, u32),
+    pub mouse_over_screen: bool,
+    pub mouse_is_down: bool,
+    pub mouse_select_start: (u32, u32),
+    pub in_crop_selection: bool,
+    pub cropped: Option<CroppedArea>,
+    pub crop_button_pressed: bool,
+    pub last_known_mouse_position: (u32, u32),
+    pub settings_state: UiState,
+    pub channels: GpuChannelSide,
+    pub mouse_resize_state: ResizeInteractionsState,
+    pub keep_borders: bool,
+}
+
+impl AdditionalRenderingState {
+    pub fn get_active_ui_flags(&self) -> Vec<UiFlag> {
+        let mut active_ui_flags = vec![];
+
+        let additional_state = self;
+
+        {
+            if TitleBarDisplay::HiddenTitleBar == additional_state.settings_state.display_title {
+                active_ui_flags.push(UiFlag::DisplayOverlays);
+            }
+
+            if additional_state.mouse_over_screen {
+                active_ui_flags.push(UiFlag::MouseOverWindow);
+            }
+
+            if additional_state.mouse_is_down {
+                active_ui_flags.push(UiFlag::MouseDown);
+            }
+
+            if additional_state.in_crop_selection || additional_state.crop_button_pressed {
+                active_ui_flags.push(UiFlag::WaitingForCrop);
+            }
+
+            if let VideoAspect::MaintainAspectRatio(_, WindowBehaviour::SizeMatchesMirrorAspect) =
+                additional_state.settings_state.aspect_ratio
+            {
+                active_ui_flags.push(UiFlag::OnlyAngles);
+            }
+
+            if additional_state.mouse_resize_state != ResizeInteractionsState::None
+                && additional_state.keep_borders
+            {
+                active_ui_flags.push(UiFlag::KeepBorders);
+            }
+
+            if let GreenScreen::Color(_) = additional_state.settings_state.green_screen {
+                active_ui_flags.push(UiFlag::UseGreenScreen);
+            }
+        }
+
+        active_ui_flags
+    }
+}

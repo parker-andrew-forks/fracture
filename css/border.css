@@ -1,0 +1,37 @@
+.border {
+    border-color: rgb(255, 81, 17);
+    border-left-style: solid;
+    border-width: 10px;
+    padding-left: 5px;
+}
+
+.ok {
+    border-color: rgb(0, 255, 55);
+    border-style: solid;
+    border-width: 2px;
+}
+
+.err {
+    border-color: rgb(255, 0, 0);
+    border-style: solid;
+    border-width: 2px;
+}
+
+.pad_text {
+    padding-left: 5px;
+    padding-right: 5px;
+}
+
+.pad_box {
+    padding: 5px;
+}
+
+.warn {
+    border-color: rgb(255, 125, 0);
+    border-style: solid;
+    border-width: 2px;
+}
+
+.textview_font {
+    font-size: 10px;
+}
