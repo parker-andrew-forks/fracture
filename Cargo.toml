@@ -6,7 +6,11 @@ edition = "2024"
 
 [features]
 default = []
-flatpak=["gnome-custom-keybindings/flatpak"]
+flatpak = []
+
+# The keybindings crate originally used flatpak-spawn 
+# 
+# flatpak=["gnome-custom-keybindings/flatpak"]
 
 [dependencies]
 ashpd = "0.10.2"
@@ -22,7 +26,7 @@ tokio = {version="1.41.1", features=["rt"]}
 wgpu = {version="28.0.0", features=["naga-ir", "serde"]}
 winit = "0.29"
 wgsl-formatter = {git="https://github.com/parker-andrew-forks/wgsl-analyzer.git", rev="3d5590767e816bdf2d6f5c7c9b304632006a1631"}
-lamco-wgpu = { git = "https://github.com/parker-andrew-forks/wgpu-bridge.git", rev="9b07732d9ded19df1ef35647236fd99bb3ce0bba"}
+lamco-wgpu = { git = "https://github.com/parker-andrew-forks/wgpu-bridge.git", rev="6159eaf26e9a1a0d78f45d843f90d361706c9620"}
 open = "5.3.2"
 rand = {version="0.9"}
 notify-rust = "4.11.6"
