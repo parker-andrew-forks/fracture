@@ -18,7 +18,6 @@ modules:
       - install -Dm755 4.png /app/share/icons/hicolor/128x128/apps/$FLATPAK_ID.png
       - install -Dm755 5.png /app/share/icons/hicolor/256x256/apps/$FLATPAK_ID.png
       - install -Dm755 6.png /app/share/icons/hicolor/512x512/apps/$FLATPAK_ID.png
-      - sed -i "s|Icon=|Icon=$FLATPAK_ID|g" /app/share/applications/$FLATPAK_ID.desktop 
     sources:
       - type: file
         path: ./fracture
@@ -50,8 +49,7 @@ modules:
       - type: file
         path: ./fracture.desktop
         dest-filename: fracture.desktop
-#        commands:
-#          - exec /app/share/applications/$FLATPAK_ID.desktop "$@"
+  
 finish-args:
   - --socket=wayland
   # This uses WebGPU and DmaBuffers with pipewire
