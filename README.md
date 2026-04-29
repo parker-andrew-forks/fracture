@@ -1,4 +1,4 @@
-# FRACTURE: A window cropping and shading tool created with WebGPU
+## FRACTURE: A window cropping and shading tool created with WebGPU
 
 This is a tool written in Rust with WebGPU for Gnome Shell to fracture (crop) and shade windows on Linux.
 
