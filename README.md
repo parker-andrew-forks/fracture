@@ -30,8 +30,6 @@ This is a tool written in Rust with WebGPU for Gnome Shell to fracture (crop) an
 <details>
 <summary>Click to expand example clips</summary>
 
-### Note: None of the websites or streamers in these examples were asked for permission. This is only intended for demonstration purposes on the repository only, and not intended for use in promoting this project.
-
 ![weather](/readme/clips/weather.gif)
 
 ![timed](/readme/clips/timed.gif)
@@ -45,10 +43,6 @@ This is a tool written in Rust with WebGPU for Gnome Shell to fracture (crop) an
 ![scale_size_set](/readme/clips/scale.gif)
 
 ![scale_size_set](/readme/clips/dont_scale.gif)
-
-![stream reshape](/readme/clips/video_example.gif)
-
-![scale_size_set](/readme/clips/kick.gif) 
 
 ![Options](/readme/img/settings.png)
 
