@@ -1,16 +1,15 @@
-use std::env;
-
+use crate::global_application_state::SAFE_MODE;
+use crate::gpu_mirror_display::defaults::FLATPAK_ID;
 use application_channel_creator::ApplicationChannelsCreator;
+use ashpd::desktop::notification::{NotificationProxy, Priority};
 use global_application_state::DESKTOP_ENV_IS_GNOME;
 use gpu_mirror_display::event_loop::run_mirror_video_output_ui;
 use gtk_user_interfaces::{
     install_ui::{self},
     settings_ui::run_settings_ui,
 };
-use notify_rust::Notification;
+use std::env;
 use stream_creation::start_mirror_stream::start_mirroring;
-
-use crate::global_application_state::SAFE_MODE;
 
 pub mod application_channel_creator;
 pub mod global_application_state;
@@ -19,6 +18,30 @@ pub mod gtk_user_interfaces;
 pub mod shaders;
 pub mod stream_creation;
 pub mod ui_state;
+
+pub async fn send_ash_notifcation(title: &str, msg: &str) -> ashpd::Result<()> {
+    let proxy = NotificationProxy::new().await?;
+
+    proxy
+        .add_notification(
+            FLATPAK_ID,
+            ashpd::desktop::notification::Notification::new(&title)
+                .body(msg)
+                .priority(Priority::Urgent),
+        )
+        .await?;
+
+    Ok(())
+}
+
+pub fn send_notifcation(title: &str, msg: &str) -> ashpd::Result<()> {
+    let tokio = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+
+    tokio.block_on(async { send_ash_notifcation(&title, &msg).await })
+}
 
 fn main() {
     // This is a hack until I fix it... For my device, the GDK_BACKEND is set to x11 and I don't know why...
@@ -73,11 +96,7 @@ fn main() {
 
                                 println!("{msg}");
 
-                                Notification::new()
-                                    .body(&msg)
-                                    .summary("Failed to start")
-                                    .show()
-                                    .unwrap();
+                                let _ = send_notifcation("Failed to start", &msg);
                             }
 
                             vec![]

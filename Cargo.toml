@@ -29,7 +29,6 @@ wgsl-formatter = {git="https://github.com/parker-andrew-forks/wgsl-analyzer.git"
 lamco-wgpu = { git = "https://github.com/parker-andrew-forks/wgpu-bridge.git", rev="6159eaf26e9a1a0d78f45d843f90d361706c9620"}
 open = "5.3.2"
 rand = {version="0.9"}
-notify-rust = "4.11.6"
 detect-desktop-environment = "1.2.0"
 drm-fourcc = "2.2.0"
 smithay-client-toolkit = "0.19.2"
