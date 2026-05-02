@@ -67,10 +67,6 @@
       <caption>Test recolors of applications by modifying colors in the fractured view</caption>
     </screenshot>
     <screenshot>
-      <image type="source">https://fracture.systems/fracture/img/preview/6.png</image>
-      <caption>Use shaders on the fractured view</caption>
-    </screenshot>
-    <screenshot>
       <image type="source">https://fracture.systems/fracture/img/preview/7.png</image>
       <caption>Fracture includes a set of example shaders for use with fractured views</caption>
     </screenshot>

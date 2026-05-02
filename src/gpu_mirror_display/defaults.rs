@@ -1,6 +1,6 @@
 pub const APPLICATION_NAME: &'static str = "FRACTURE";
 
-pub const FLATPAK_ID: &'static str = "systems.fracture.launcher";
+pub const FP_ID: &'static str = "systems.fracture.launcher";
 
 pub const CROP_COLOR: (f32, f32, f32, f32) = (0.2, 0.5, 0.8, 0.9);
 

@@ -1,5 +1,5 @@
 use crate::global_application_state::SAFE_MODE;
-use crate::gpu_mirror_display::defaults::FLATPAK_ID;
+use crate::gpu_mirror_display::defaults::FP_ID;
 use application_channel_creator::ApplicationChannelsCreator;
 use ashpd::desktop::notification::{NotificationProxy, Priority};
 use global_application_state::DESKTOP_ENV_IS_GNOME;
@@ -24,7 +24,7 @@ pub async fn send_ash_notifcation(title: &str, msg: &str) -> ashpd::Result<()> {
 
     proxy
         .add_notification(
-            FLATPAK_ID,
+            FP_ID,
             ashpd::desktop::notification::Notification::new(&title)
                 .body(msg)
                 .priority(Priority::Urgent),
@@ -96,7 +96,10 @@ fn main() {
 
                                 println!("{msg}");
 
-                                let _ = send_notifcation("Failed to start", &msg);
+                                // todo: fix broken notification. do not uncomment, it makes
+                                // the app look like a virus.
+                                //
+                                // let _ = send_notifcation("Failed to start", &msg);
                             }
 
                             vec![]
