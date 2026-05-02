@@ -1,10 +1,14 @@
+### Install: The recommended way is to use Flathub
+
+[<img width="240" src="https://flathub.org/assets/badges/flathub-badge-i-en.png">](https//todo)
+
 ## FRACTURE: A window cropping and shading tool created with WebGPU
 
 This is a tool written in Rust with WebGPU for Gnome Shell to fracture (crop) and shade windows on Linux.
 
-### Install: The recommended way is to use Flathub
+![weather](/readme/clips/weather.gif)
 
-[<img width="240" src="https://flathub.org/assets/badges/flathub-badge-i-en.png">](https//todo)
+![calc_shaders](/readme/clips/calc.gif)
 
 ### Pictures
 ![1](/flatpak/img/preview/1.png)
@@ -27,14 +31,7 @@ This is a tool written in Rust with WebGPU for Gnome Shell to fracture (crop) an
 
 ### Example clips
 
-<details>
-<summary>Click to expand example clips</summary>
-
-![weather](/readme/clips/weather.gif)
-
 ![timed](/readme/clips/timed.gif)
-
-![calc_shaders](/readme/clips/calc.gif)
 
 ![chained](/readme/clips/chained.gif)
 
@@ -43,11 +40,6 @@ This is a tool written in Rust with WebGPU for Gnome Shell to fracture (crop) an
 ![scale_size_set](/readme/clips/scale.gif)
 
 ![scale_size_set](/readme/clips/dont_scale.gif)
-
-![Options](/readme/img/settings.png)
-
-</details>
-
 
 ### Performance
 
