@@ -1,6 +1,6 @@
 ### Install: The recommended way is to use Flathub
 
-[<img width="240" src="https://flathub.org/assets/badges/flathub-badge-i-en.png">](https//todo)
+[<img width="240" src="https://flathub.org/assets/badges/flathub-badge-i-en.png">](https://flathub.org/en/apps/systems.fracture.launcher)
 
 ## FRACTURE: A window cropping and shading tool created with WebGPU
 
