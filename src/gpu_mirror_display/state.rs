@@ -8,6 +8,8 @@ use crate::{
     ui_state::{GreenScreen, TitleBarDisplay, UiState, VideoAspect, WindowBehaviour},
 };
 use std::time::{Duration, SystemTime};
+use tokio::runtime::Runtime;
+use wgpu::PipelineLayout;
 use winit::{dpi::PhysicalSize, window::Window};
 
 #[derive(Debug, Clone)]
@@ -21,13 +23,13 @@ pub struct DmaStartupChecks {
     pub fail_at: u32,
 }
 
-pub struct State<'a> {
-    pub surface: wgpu::Surface<'a>,
+pub struct State {
+    pub surface: wgpu::Surface<'static>,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub config: wgpu::SurfaceConfiguration,
     pub size: winit::dpi::PhysicalSize<u32>,
-    pub window: &'a Window,
+    pub window: std::sync::Arc<Window>,
     pub mirror_output_rendering_pipeline: wgpu::RenderPipeline,
     pub mirror_fractured_texture: wgpu::Texture,
     pub ui_rendering_pipeline: wgpu::RenderPipeline,
@@ -50,9 +52,17 @@ pub struct State<'a> {
     pub last_reported_offsets: (u32, u32),
 
     pub dma_startup_checks: DmaStartupChecks,
+
+    pub diffuse_sampler: Option<wgpu::Sampler>,
+    pub rt: Option<Runtime>,
+    pub pipeline_layout: Option<PipelineLayout>,
+    pub ui_flags: Option<wgpu::Buffer>,
+    pub texture_bind_group_layout: Option<wgpu::BindGroupLayout>,
+
+    pub should_shutdown: bool,
 }
 
-impl<'a> State<'a> {
+impl State {
     pub fn window(&self) -> &Window {
         &self.window
     }
@@ -99,7 +109,7 @@ pub struct AdditionalRenderingState {
     pub crop_button_pressed: bool,
     pub last_known_mouse_position: (u32, u32),
     pub settings_state: UiState,
-    pub channels: GpuChannelSide,
+    pub channels: std::sync::Arc<GpuChannelSide>,
     pub mouse_resize_state: ResizeInteractionsState,
     pub keep_borders: bool,
 }

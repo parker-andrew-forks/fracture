@@ -25,16 +25,9 @@ use crate::{
 use lamco_wgpu::WgpuTexture;
 use std::{sync::Arc, time::SystemTime};
 use wgpu::{BindGroupLayout, Extent3d, TextureUsages, TextureView, TextureViewDescriptor};
-use winit::{dpi::PhysicalSize, event_loop::EventLoopWindowTarget};
+use winit::dpi::PhysicalSize;
 
-pub fn on_redraw(
-    state: &mut State,
-    additional_state: &mut AdditionalRenderingState,
-    elwt: &EventLoopWindowTarget<()>,
-    diffuse_sampler: &wgpu::Sampler,
-    ui_flags: &wgpu::Buffer,
-    texture_bind_group_layout: &BindGroupLayout,
-) {
+pub fn on_redraw(state: &mut State, additional_state: &mut AdditionalRenderingState) {
     state.window().request_redraw();
 
     let data: Option<Arc<_>> = {
@@ -103,11 +96,11 @@ pub fn on_redraw(
         let size = state.window.inner_size();
 
         let overlay_text_view =
-            write_ui_texture_and_handle_ui_actions(additional_state, state, size, &elwt);
+            write_ui_texture_and_handle_ui_actions(additional_state, state, size);
 
-        if elwt.exiting() {
-            return;
-        }
+        // if elwt.exiting() {
+        //     return;
+        // }
 
         /*
            Sometimes, I'm writing pixels directly to a texture that will always be the same size as the window.
@@ -117,11 +110,17 @@ pub fn on_redraw(
         let overlay = define_frame(&frame, &cropped);
         let positioned_frame = crop_frame_to_origin(&frame, &overlay, &cropped);
 
+        let (sampler, ui_flags, group) = (
+            state.diffuse_sampler.take().unwrap(),
+            state.ui_flags.take().unwrap(),
+            state.texture_bind_group_layout.take().unwrap(),
+        );
+
         let bindings = BindingsUsedInBindGroup {
-            sampler_1: &diffuse_sampler,
+            sampler_1: &sampler,
             ui_2: &overlay_text_view,
             ui_flags_3: &ui_flags,
-            bind_group_layout: &texture_bind_group_layout,
+            bind_group_layout: &group,
         };
 
         match verts.1 {
@@ -167,27 +166,29 @@ pub fn on_redraw(
                     (phys_w, phys_h),
                 );
 
-                write_ui_data_to_buffer(
-                    &state.queue,
-                    (&state).window.inner_size(),
-                    additional_state.last_known_mouse_position,
-                    additional_state.mouse_select_start,
-                    &ui_flags,
-                    additional_state.settings_state.frame_transparency as f32,
-                    &active_ui_flags,
-                    (positioned_frame.origin.x, positioned_frame.origin.y),
-                    Some((
-                        positioned_frame.origin.x + positioned_frame.dimensions_after.width,
-                        positioned_frame.origin.y + positioned_frame.dimensions_after.height,
-                    )),
-                    if let GreenScreen::Color(v) =
-                        additional_state.settings_state.green_screen.clone()
-                    {
-                        Some(v)
-                    } else {
-                        None
-                    },
-                );
+                {
+                    write_ui_data_to_buffer(
+                        &state.queue,
+                        (&state).window.inner_size(),
+                        additional_state.last_known_mouse_position,
+                        additional_state.mouse_select_start,
+                        &ui_flags,
+                        additional_state.settings_state.frame_transparency as f32,
+                        &active_ui_flags,
+                        (positioned_frame.origin.x, positioned_frame.origin.y),
+                        Some((
+                            positioned_frame.origin.x + positioned_frame.dimensions_after.width,
+                            positioned_frame.origin.y + positioned_frame.dimensions_after.height,
+                        )),
+                        if let GreenScreen::Color(v) =
+                            additional_state.settings_state.green_screen.clone()
+                        {
+                            Some(v)
+                        } else {
+                            None
+                        },
+                    );
+                }
 
                 create_bindings_write_texture(
                     state,
@@ -229,6 +230,12 @@ pub fn on_redraw(
                     &frame,
                 );
             }
+        }
+
+        {
+            state.diffuse_sampler = Some(sampler);
+            state.ui_flags = Some(ui_flags);
+            state.texture_bind_group_layout = Some(group);
         }
     }
 
@@ -272,8 +279,6 @@ pub fn on_redraw(
             println!("{v:?}");
         }
     }
-
-    // std::thread::sleep(Duration::from_secs(15));
 }
 
 fn padded_to_align(mut value: u32) -> u32 {
@@ -295,7 +300,7 @@ fn calculate_size(mut width: u32, mut height: u32) -> u32 {
     size_of::<u32>() as u32 * width * height
 }
 
-impl<'a> State<'a> {
+impl State {
     fn render(
         &mut self,
         additional_state: &mut AdditionalRenderingState,
