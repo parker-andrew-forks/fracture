@@ -609,10 +609,7 @@ impl State {
                         let output_buffer = cpu_copy_dma_buf_data;
                         let cpu_data_buffer_slice = output_buffer.slice(..);
 
-                        let rt = tokio::runtime::Builder::new_current_thread()
-                            .build()
-                            .unwrap();
-
+                        let rt = state.rt.as_ref().unwrap();
                         let (tx, rx) = futures_intrusive::channel::shared::oneshot_channel();
                         cpu_data_buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
                             tx.send(result).unwrap();

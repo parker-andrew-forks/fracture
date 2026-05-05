@@ -561,7 +561,7 @@ impl ApplicationHandler<()> for State3 {
             should_shutdown: false,
         };
 
-        let additional_state = AdditionalRenderingState {
+        let mut additional_state = AdditionalRenderingState {
             mouse_clicks: vec![],
             mouse_downs: vec![],
             new_settings: true,
@@ -606,6 +606,8 @@ impl ApplicationHandler<()> for State3 {
             .unwrap();
 
         state.resize(self.window.as_ref().unwrap().inner_size());
+
+        on_redraw(&mut state, &mut additional_state);
 
         self.state = Some(state);
         self.add = Some(additional_state);
