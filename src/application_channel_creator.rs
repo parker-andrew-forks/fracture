@@ -24,6 +24,7 @@ pub struct GpuChannelSide {
     pub gpu_frame_scan_requested: std::sync::mpsc::Receiver<ScanRequest>,
     pub ui_shutdown_conf: std::sync::mpsc::Receiver<()>,
     pub dbus_shutdown_conf: std::sync::mpsc::Receiver<()>,
+    pub stream_start_check_mirror_gpu: std::sync::mpsc::Receiver<bool>,
 }
 
 pub struct UiChannelSide {
@@ -32,6 +33,7 @@ pub struct UiChannelSide {
     pub gpu_receiver_request: std::sync::mpsc::Receiver<UiState>,
     pub stop_settings_ui: std::sync::mpsc::Receiver<()>,
     pub shutdown_confirmed: std::sync::mpsc::Sender<()>,
+    pub stream_start_check_settings_ui: std::sync::mpsc::Receiver<bool>,
 }
 
 pub struct DbusSide {
@@ -41,6 +43,8 @@ pub struct DbusSide {
     pub dmabuf_send: std::sync::mpsc::Sender<Arc<smithay_reexports::Dmabuf>>,
     pub gpu_frame_scan_requested: std::sync::mpsc::Sender<ScanRequest>,
     pub shutdown_confirmed: std::sync::mpsc::Sender<()>,
+    pub stream_start_check_mirror_gpu: std::sync::mpsc::Sender<bool>,
+    pub stream_start_check_settings_ui: std::sync::mpsc::Sender<bool>,
 }
 
 impl ApplicationChannelsCreator {
@@ -56,6 +60,9 @@ impl ApplicationChannelsCreator {
         let (s9, r9) = std::sync::mpsc::channel::<_>();
         let (s10, r10) = std::sync::mpsc::channel::<_>();
         let (s11, r11) = std::sync::mpsc::channel::<_>();
+        let (s12, r12) = std::sync::mpsc::channel::<_>();
+        let (s13, r13) = std::sync::mpsc::channel::<_>();
+
         (
             GpuChannelSide {
                 start_settings_ui: s1,
@@ -69,6 +76,7 @@ impl ApplicationChannelsCreator {
                 gpu_frame_scan_requested: r9,
                 ui_shutdown_conf: r10,
                 dbus_shutdown_conf: r11,
+                stream_start_check_mirror_gpu: r12,
             },
             UiChannelSide {
                 start_signal_receiver: r1,
@@ -76,6 +84,7 @@ impl ApplicationChannelsCreator {
                 gpu_receiver_request: r3,
                 stop_settings_ui: r6,
                 shutdown_confirmed: s10,
+                stream_start_check_settings_ui: r13,
             },
             DbusSide {
                 predicted_frame_fmt_sender: s4,
@@ -84,6 +93,8 @@ impl ApplicationChannelsCreator {
                 dmabuf_send: s8,
                 gpu_frame_scan_requested: s9,
                 shutdown_confirmed: s11,
+                stream_start_check_mirror_gpu: s12,
+                stream_start_check_settings_ui: s13,
             },
         )
     }

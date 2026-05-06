@@ -8,7 +8,7 @@ use super::{
 };
 use crate::ui_state::{RemoveColors, TitleBarDisplay, UiState};
 use wgpu::{Extent3d, Queue, TextureDescriptor, TextureView, TextureViewDescriptor};
-use winit::{dpi::PhysicalSize, event_loop::EventLoopWindowTarget};
+use winit::dpi::PhysicalSize;
 
 /// The name is misleading, this writes the UI textures, but it also handles clicking on the UI
 /// because the logic is easier to follow when both of these are done together. An improved UI system
@@ -18,7 +18,7 @@ pub fn write_ui_texture_and_handle_ui_actions(
     additional: &mut AdditionalRenderingState,
     state: &mut State,
     surface_size: PhysicalSize<u32>,
-    wt: &EventLoopWindowTarget<()>,
+    // wt: &EventLoopWindowTarget<()>,
 ) -> TextureView {
     // let state: &State = state;
     let ui_settings: &UiState = &additional.settings_state.clone();
@@ -178,7 +178,7 @@ pub fn write_ui_texture_and_handle_ui_actions(
                     &img_position,
                     &binary_images::ICON_EXIT_NO_FILL,
                 ) {
-                    shutdown::shutdown(&wt, &state, &additional);
+                    shutdown::start_shutdown(state);
                 }
             }
 

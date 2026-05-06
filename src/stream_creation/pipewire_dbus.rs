@@ -84,7 +84,7 @@ impl FreeDesktopPipewireWindowStream {
     pub fn create_stream(
         _window: &gnome_window_calls::abstraction::Window,
         cursor_mode: CursorMode,
-    ) -> FreeDesktopPipewireWindowStream {
+    ) -> Result<FreeDesktopPipewireWindowStream, ()> {
         let mode = match cursor_mode {
             CursorMode::Hidden => ashpd::desktop::screencast::CursorMode::Hidden,
             CursorMode::Embedded => ashpd::desktop::screencast::CursorMode::Embedded,
@@ -96,10 +96,10 @@ impl FreeDesktopPipewireWindowStream {
             .build()
             .unwrap();
 
-        let stream = rt.block_on(async {
+        let stream: Result<_, ()> = rt.block_on(async {
             let proxy = Screencast::new().await.unwrap();
             let session = proxy.create_session().await.unwrap();
-            proxy
+            let seleect = proxy
                 .select_sources(
                     &session,
                     mode,
@@ -108,20 +108,44 @@ impl FreeDesktopPipewireWindowStream {
                     None,
                     PersistMode::DoNot,
                 )
-                .await
-                .unwrap();
+                .await;
 
-            let response = proxy
-                .start(&session, None)
-                .await
-                .unwrap()
-                .response()
-                .unwrap();
+            if seleect.is_err() {
+                return Err(());
+            }
 
-            response.streams().into_iter().next().unwrap().clone()
+            let res = proxy.start(&session, None).await;
+
+            if res.is_err() {
+                return Err(());
+            }
+
+            let response = res.unwrap().response();
+
+            if response.is_err() {
+                return Err(());
+            }
+
+            let response = response.unwrap();
+
+            let stream = response.streams().into_iter().next();
+
+            if stream.is_none() {
+                return Err(());
+            }
+
+            let stream = stream.unwrap();
+
+            Ok(stream.clone())
         });
 
-        FreeDesktopPipewireWindowStream { inner: stream }
+        if let Err(_) = stream {
+            return Err(());
+        }
+
+        Ok(FreeDesktopPipewireWindowStream {
+            inner: stream.unwrap(),
+        })
     }
 }
 

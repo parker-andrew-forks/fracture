@@ -299,17 +299,40 @@ pub fn start_mirroring(
         }
     });
 
-    let pipewire_window_stream: Box<dyn PipewireStream> = {
+    let pipewire_window_stream: Result<Box<dyn PipewireStream>, ()> = {
         let cursor = CursorMode::Hidden;
 
         if have_gnome_window_handle {
-            Box::new(GnomePipewireWindowStream::create_stream(&window, cursor))
-        } else {
-            Box::new(FreeDesktopPipewireWindowStream::create_stream(
+            Ok(Box::new(GnomePipewireWindowStream::create_stream(
                 &window, cursor,
-            ))
+            )))
+        } else {
+            let result = FreeDesktopPipewireWindowStream::create_stream(&window, cursor);
+
+            if result.is_err() {
+                Err(())
+            } else {
+                Ok(Box::new(result.unwrap()))
+            }
         }
     };
+
+    let is_ok = pipewire_window_stream.is_ok();
+
+    dbus_channels
+        .stream_start_check_mirror_gpu
+        .send(is_ok)
+        .unwrap();
+    dbus_channels
+        .stream_start_check_settings_ui
+        .send(is_ok)
+        .unwrap();
+
+    if !is_ok {
+        return;
+    }
+
+    let pipewire_window_stream = pipewire_window_stream.unwrap();
 
     pw::init();
 

@@ -1,11 +1,12 @@
-use super::state::{AdditionalRenderingState, State};
-use winit::event_loop::EventLoopWindowTarget;
+use winit::event_loop::ActiveEventLoop;
 
-pub fn shutdown(
-    ev: &EventLoopWindowTarget<()>,
-    _state: &State,
-    additional: &AdditionalRenderingState,
-) {
+use super::state::{AdditionalRenderingState, State};
+
+pub fn start_shutdown(s: &mut State) {
+    s.should_shutdown = true;
+}
+
+pub fn shutdown(ev: &ActiveEventLoop, _state: &State, additional: &AdditionalRenderingState) {
     println!("Shutting down.");
 
     let _ = additional.channels.terminate_pipewire_stream.send(());

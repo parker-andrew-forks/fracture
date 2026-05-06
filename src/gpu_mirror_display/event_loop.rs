@@ -22,12 +22,16 @@ use crate::ui_state::{
 use lamco_wgpu::SupportedFormat;
 use std::mem;
 use std::num::NonZero;
+use std::sync::Arc;
 use wgpu::util::DeviceExt;
-use wgpu::{BufferDescriptor, BufferUsages, Extent3d};
+use wgpu::{BufferDescriptor, BufferUsages, Extent3d, Surface};
+use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
-use winit::event::{Event, WindowEvent};
-use winit::platform::wayland::WindowBuilderExtWayland;
-use winit::{error::EventLoopError, event_loop::EventLoop, window::WindowBuilder};
+use winit::event::{DeviceEvent, DeviceId, WindowEvent};
+use winit::event_loop::ActiveEventLoop;
+use winit::platform::wayland::WindowAttributesExtWayland;
+use winit::window::{Window, WindowAttributes, WindowId};
+use winit::{error::EventLoopError, event_loop::EventLoop};
 
 pub enum WrappedBridge {
     Bridged(lamco_wgpu::WgpuBridge),
@@ -40,61 +44,88 @@ pub struct WebGpuReport {
     pub formats: Option<Vec<SupportedFormat>>,
 }
 
-pub fn run_mirror_video_output_ui(channels: GpuChannelSide) -> Result<(), EventLoopError> {
-    let bridge = {
-        let mut bridge: WrappedBridge = WrappedBridge::Direct;
+struct State3 {
+    window: Option<Arc<Window>>,
+    state: Option<State>,
+    add: Option<AdditionalRenderingState>,
+    channels: Arc<GpuChannelSide>,
+    counter: i32,
+}
 
-        if let Err(_) = std::env::var(SAFE_MODE) {
-            match lamco_wgpu::bridge::WgpuBridge::new_with_explicit_sync() {
-                Ok(sync_bridge) => {
-                    bridge = WrappedBridge::BridgedExplicitSync(sync_bridge);
-                }
-                Err(_) => match lamco_wgpu::bridge::WgpuBridge::new() {
-                    Ok(no_sync) => bridge = WrappedBridge::Bridged(no_sync),
-                    _ => {}
-                },
+impl ApplicationHandler<()> for State3 {
+    fn user_event(&mut self, _: &ActiveEventLoop, _: ()) {}
+
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if let Ok(received_stream) = self.channels.stream_start_check_mirror_gpu.recv() {
+            if !received_stream {
+                println!("failed to select stream");
+
+                event_loop.exit();
+                return;
             }
+        } else {
+            return;
         }
 
-        bridge
-    };
-
-    match &bridge {
-        WrappedBridge::Bridged(bridge) | WrappedBridge::BridgedExplicitSync(bridge) => {
-            let report: Vec<SupportedFormat> = bridge
-                .supported_formats()
-                .iter()
-                .map(|v| v.clone())
-                .collect();
-
-            let report = WebGpuReport {
-                formats: Some(report),
-            };
-
-            channels.webgpu_drm_report.send(report).unwrap();
-
-            println!("Sync: {:?}", bridge.sync_capabilities())
+        if self.window.is_some() {
+            return;
         }
-        WrappedBridge::Direct => println!("Sync: Direct Wgpu, no sync available"),
-    }
 
-    // before starting, wait for the video format
-    let video_format = channels.predicted_frame_fmt_receiver.recv().unwrap();
+        let bridge = {
+            let mut bridge: WrappedBridge = WrappedBridge::Direct;
 
-    let ended = {
-        env_logger::init();
-        let event_loop = EventLoop::new().unwrap();
-        let window = {
+            if let Err(_) = std::env::var(SAFE_MODE) {
+                match lamco_wgpu::bridge::WgpuBridge::new_with_explicit_sync() {
+                    Ok(sync_bridge) => {
+                        bridge = WrappedBridge::BridgedExplicitSync(sync_bridge);
+                    }
+                    Err(_) => match lamco_wgpu::bridge::WgpuBridge::new() {
+                        Ok(no_sync) => bridge = WrappedBridge::Bridged(no_sync),
+                        _ => {}
+                    },
+                }
+            }
+
+            bridge
+        };
+
+        match &bridge {
+            WrappedBridge::Bridged(bridge) | WrappedBridge::BridgedExplicitSync(bridge) => {
+                let report: Vec<SupportedFormat> = bridge
+                    .supported_formats()
+                    .iter()
+                    .map(|v| v.clone())
+                    .collect();
+
+                let report = WebGpuReport {
+                    formats: Some(report),
+                };
+
+                self.channels.webgpu_drm_report.send(report).unwrap();
+
+                println!("Sync: {:?}", bridge.sync_capabilities())
+            }
+            WrappedBridge::Direct => println!("Sync: Direct Wgpu, no sync available"),
+        }
+
+        // before starting, wait for the video format
+        let video_format = self.channels.predicted_frame_fmt_receiver.recv().unwrap();
+
+        let at = {
             let size = LogicalSize::new(video_format.width as f64, video_format.height as f64);
-            WindowBuilder::new()
+
+            let at = WindowAttributes::default()
                 .with_name(APPLICATION_NAME, APPLICATION_NAME)
                 .with_title(APPLICATION_NAME)
                 .with_transparent(true)
                 .with_inner_size(size)
-                .with_resizable(true)
-                .build(&event_loop)
-                .unwrap()
+                .with_resizable(true);
+
+            // let w = event_loop.create_window(at).unwrap();
+            at
         };
+
+        self.window = Some(Arc::new(event_loop.create_window(at).unwrap()));
 
         let overlay_dimensions = binary_images::ICON_SELECT_SCREEN_AREA.dimensions;
 
@@ -105,7 +136,10 @@ pub fn run_mirror_video_output_ui(channels: GpuChannelSide) -> Result<(), EventL
             WrappedBridge::Direct => wgpu::Instance::new(&wgpu::InstanceDescriptor::default()),
         };
 
-        let surface = instance.create_surface(&window).unwrap();
+        let temp: &Arc<Window> = &self.window.as_ref().unwrap();
+        let temp: Arc<Window> = temp.clone();
+
+        let surface: Surface<'static> = instance.create_surface(temp).unwrap();
 
         // todo: Maybe add the ability to switch adapters as a method for GPU selection
         // let list: Vec<wgpu::Adapter> = instance.enumerate_adapters(wgpu::Backends::all());
@@ -301,7 +335,7 @@ pub fn run_mirror_video_output_ui(channels: GpuChannelSide) -> Result<(), EventL
         let diffuse_texture_view =
             diffuse_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let mut diffuse_sampler = define_primary_sampler(
+        let diffuse_sampler: wgpu::Sampler = define_primary_sampler(
             &device,
             crate::ui_state::DEFAULT_MAGNIFY_FILTER,
             crate::ui_state::DEFAULT_MINIFY_FILTER,
@@ -456,7 +490,7 @@ pub fn run_mirror_video_output_ui(channels: GpuChannelSide) -> Result<(), EventL
 
         write_ui_data_to_buffer(
             &queue,
-            window.inner_size(),
+            self.window.as_ref().unwrap().inner_size(),
             (0, 0),
             (0, 0),
             &ui_flags,
@@ -504,7 +538,6 @@ pub fn run_mirror_video_output_ui(channels: GpuChannelSide) -> Result<(), EventL
                 view_formats: &[],
             }),
             size: size,
-            window: &window,
             device: device,
             vertex_buffer,
             index_buffer,
@@ -528,13 +561,22 @@ pub fn run_mirror_video_output_ui(channels: GpuChannelSide) -> Result<(), EventL
                 fail_at: 30,
                 dma_error_count: 0,
             },
+            window: self.window.as_ref().unwrap().clone(),
+
+            // new stuff with winit
+            diffuse_sampler: Some(diffuse_sampler),
+            rt: Some(rt),
+            pipeline_layout: Some(render_pipeline_layout),
+            ui_flags: Some(ui_flags),
+            texture_bind_group_layout: Some(texture_bind_group_layout),
+            should_shutdown: false,
         };
 
         let mut additional_state = AdditionalRenderingState {
             mouse_clicks: vec![],
             mouse_downs: vec![],
             new_settings: true,
-            last_surface_size: state.window.inner_size(),
+            last_surface_size: self.window.as_ref().unwrap().inner_size(),
             last_frame_size: (0, 0),
             mouse_over_screen: false,
             mouse_is_down: false,
@@ -563,7 +605,7 @@ pub fn run_mirror_video_output_ui(channels: GpuChannelSide) -> Result<(), EventL
                 ),
                 ..Default::default()
             },
-            channels,
+            channels: self.channels.clone(),
             mouse_resize_state: ResizeInteractionsState::None,
             keep_borders: false,
         };
@@ -574,108 +616,159 @@ pub fn run_mirror_video_output_ui(channels: GpuChannelSide) -> Result<(), EventL
             .send(additional_state.settings_state.clone())
             .unwrap();
 
-        state.resize(state.window.inner_size());
+        state.resize(self.window.as_ref().unwrap().inner_size());
 
-        let res = event_loop.run(move |event, elwt| {
-            while let Ok(new) = additional_state.channels.new_settings_receiver.try_recv() {
-                // This is expensive, but needs to happen or the image will become distorted.
-                state.resize(state.window.inner_size());
+        on_redraw(&mut state, &mut additional_state);
 
-                additional_state.settings_state = new;
-                additional_state.new_settings = true;
+        self.state = Some(state);
+        self.add = Some(additional_state);
+    }
 
-                if additional_state
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
+        if !self.add.is_some() && !self.state.is_some() {
+            return;
+        }
+
+        let mut additional_state = self.add.take().unwrap();
+        let mut state = self.state.take().unwrap();
+
+        while let Ok(new) = additional_state.channels.new_settings_receiver.try_recv() {
+            // This is expensive, but needs to happen or the image will become distorted.
+            state.resize(state.window.inner_size());
+
+            additional_state.settings_state = new;
+            additional_state.new_settings = true;
+
+            if additional_state
+                .settings_state
+                .should_define_new_primary_sampler
+            {
+                state.diffuse_sampler = Some(define_primary_sampler(
+                    &state.device,
+                    additional_state.settings_state.magnify_filter,
+                    additional_state.settings_state.minify_filter,
+                ));
+
+                additional_state
                     .settings_state
-                    .should_define_new_primary_sampler
+                    .should_define_new_primary_sampler = false;
+
+                additional_state
+                    .channels
+                    .gpu_sender_request
+                    .send(additional_state.settings_state.clone())
+                    .unwrap();
+            }
+        }
+        match event {
+            WindowEvent::RedrawRequested => {
+                on_redraw(&mut state, &mut additional_state);
+
+                if state.should_shutdown {
+                    shutdown::shutdown(event_loop, &state, &additional_state);
+
+                    return;
+                }
+            }
+            WindowEvent::CloseRequested => {
+                shutdown::shutdown(event_loop, &state, &additional_state);
+
+                return;
+            }
+            WindowEvent::Focused(false) => {
                 {
-                    diffuse_sampler = define_primary_sampler(
-                        &state.device,
-                        additional_state.settings_state.magnify_filter,
-                        additional_state.settings_state.minify_filter,
-                    );
+                    // So, after cropping, the application started resizing when losing
+                    // focus to the last dragged window size. When searching on Google, the
+                    // response provided was
+                    //
+                    //      Windows resizing or shrinking upon losing focus in Wayland is
+                    //      often caused by Client-Side Decorations (CSD) acting
+                    //      incorrectly, where the window shrinks to match reduced shadows wh...
+                    //
+                    // I really don't know where I went wrong, if I even made a mistake... So the hack
+                    // to fix this issue is to resize the window when the focus is lost to make
+                    // sure it matches the last known size the application detected. (As something
+                    // is resizing the window when the focus is lost)
 
-                    additional_state
-                        .settings_state
-                        .should_define_new_primary_sampler = false;
-
-                    additional_state
-                        .channels
-                        .gpu_sender_request
-                        .send(additional_state.settings_state.clone())
+                    state
+                        .window
+                        .request_inner_size(additional_state.last_surface_size)
                         .unwrap();
                 }
             }
 
-            match &event {
-                Event::WindowEvent {
-                    window_id: _,
-                    event,
-                } => match event {
-                    WindowEvent::RedrawRequested => on_redraw(
-                        &mut state,
-                        &mut additional_state,
-                        elwt,
-                        &diffuse_sampler,
-                        &ui_flags,
-                        &texture_bind_group_layout,
-                    ),
-                    WindowEvent::CloseRequested => {
-                        shutdown::shutdown(elwt, &state, &additional_state);
+            _ => on_input_events(&event, &state, &mut additional_state),
+        }
 
-                        return;
-                    }
-                    WindowEvent::Focused(false) => {
-                        {
-                            // So, after cropping, the application started resizing when losing
-                            // focus to the last dragged window size. When searching on Google, the
-                            // response provided was
-                            //
-                            //      Windows resizing or shrinking upon losing focus in Wayland is
-                            //      often caused by Client-Side Decorations (CSD) acting
-                            //      incorrectly, where the window shrinks to match reduced shadows wh...
-                            //
-                            // I really don't know where I went wrong, if I even made a mistake... So the hack
-                            // to fix this issue is to resize the window when the focus is lost to make
-                            // sure it matches the last known size the application detected. (As something
-                            // is resizing the window when the focus is lost)
-
-                            state
-                                .window
-                                .request_inner_size(additional_state.last_surface_size)
-                                .unwrap();
-                        }
-                    }
-
-                    _ => on_input_events(event, &state, &mut additional_state),
-                },
-
-                _ => {}
+        if additional_state.new_settings {
+            if let TitleBarDisplay::TitleBarVisible = &additional_state.settings_state.display_title
+            {
+                state.window.set_decorations(true);
+            } else {
+                state.window.set_decorations(false);
             }
 
-            if additional_state.new_settings {
-                if let TitleBarDisplay::TitleBarVisible =
-                    &additional_state.settings_state.display_title
-                {
-                    state.window.set_decorations(true);
-                } else {
-                    state.window.set_decorations(false);
+            match &additional_state.settings_state.window_interactions {
+                crate::ui_state::WindowInteractions::Interactable => {
+                    let _ = state.window.set_cursor_hittest(true);
                 }
-
-                if_shader_compilation_requested(
-                    &rt,
-                    &mut state,
-                    &mut additional_state,
-                    &render_pipeline_layout,
-                );
+                crate::ui_state::WindowInteractions::PassThrough => {
+                    let _ = state.window.set_cursor_hittest(false);
+                }
             }
 
-            remove_expired_mouse_events(&mut additional_state);
+            let rt = state.rt.take().unwrap();
+            let render_pipeline_layout = state.pipeline_layout.take().unwrap();
 
-            additional_state.new_settings = false;
-        });
+            if_shader_compilation_requested(
+                &rt,
+                &mut state,
+                &mut additional_state,
+                &render_pipeline_layout,
+            );
 
-        res
+            state.rt = Some(rt);
+            state.pipeline_layout = Some(render_pipeline_layout);
+        }
+
+        remove_expired_mouse_events(&mut additional_state);
+
+        additional_state.new_settings = false;
+
+        self.state = Some(state);
+        self.add = Some(additional_state);
+    }
+
+    fn device_event(&mut self, _: &ActiveEventLoop, _: DeviceId, _: DeviceEvent) {}
+
+    fn about_to_wait(&mut self, ev: &ActiveEventLoop) {
+        match &self.window {
+            Some(w) => {
+                w.request_redraw();
+            }
+            None => {
+                if ev.exiting() {
+                    println!("shutting down");
+                    return;
+                } else {
+                    println!("idk what is happening ");
+                }
+            }
+        }
+
+        self.counter += 1;
+    }
+}
+
+pub fn run_mirror_video_output_ui(channels: GpuChannelSide) -> Result<(), EventLoopError> {
+    let event_loop = EventLoop::new().unwrap();
+    let mut state3 = State3 {
+        channels: Arc::new(channels),
+        window: None,
+        counter: 0,
+        state: None,
+        add: None,
     };
 
-    ended
+    event_loop.run_app(&mut state3)
 }

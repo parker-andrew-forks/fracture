@@ -163,39 +163,29 @@ fn on_cursor_movements(
 
     if additional_state.settings_state.display_title == TitleBarDisplay::HiddenTitleBar {
         if x < resize && y < resize {
-            state
-                .window
-                .set_cursor_icon(winit::window::CursorIcon::NwResize);
+            state.window.set_cursor(winit::window::CursorIcon::NwResize);
             additional_state.mouse_resize_state = ResizeInteractionsState::NwResize;
         } else if x < resize && y > height - resize {
-            state
-                .window
-                .set_cursor_icon(winit::window::CursorIcon::SwResize);
+            state.window.set_cursor(winit::window::CursorIcon::SwResize);
             additional_state.mouse_resize_state = ResizeInteractionsState::SwResize;
         } else if y < resize && x > width - resize {
-            state
-                .window
-                .set_cursor_icon(winit::window::CursorIcon::NeResize);
+            state.window.set_cursor(winit::window::CursorIcon::NeResize);
             additional_state.mouse_resize_state = ResizeInteractionsState::NeResize;
         } else if y > height - resize && x > width - resize {
-            state
-                .window
-                .set_cursor_icon(winit::window::CursorIcon::SeResize);
+            state.window.set_cursor(winit::window::CursorIcon::SeResize);
             additional_state.mouse_resize_state = ResizeInteractionsState::SeResize;
         } else {
             if let VideoAspect::MaintainAspectRatio(_, WindowBehaviour::SizeMatchesMirrorAspect) =
                 additional_state.settings_state.aspect_ratio
             {
-                state
-                    .window
-                    .set_cursor_icon(winit::window::CursorIcon::Default);
+                state.window.set_cursor(winit::window::CursorIcon::Default);
                 additional_state.mouse_resize_state = ResizeInteractionsState::None;
             } else {
                 if x < resize || x > width - resize || y < resize || y > height - resize {
                     if x < resize || x > width - resize {
                         state
                             .window
-                            .set_cursor_icon(winit::window::CursorIcon::ColResize);
+                            .set_cursor(winit::window::CursorIcon::ColResize);
 
                         if x < resize {
                             additional_state.mouse_resize_state = ResizeInteractionsState::West;
@@ -205,7 +195,7 @@ fn on_cursor_movements(
                     } else {
                         state
                             .window
-                            .set_cursor_icon(winit::window::CursorIcon::RowResize);
+                            .set_cursor(winit::window::CursorIcon::RowResize);
 
                         if y < resize {
                             additional_state.mouse_resize_state = ResizeInteractionsState::North;
@@ -214,17 +204,13 @@ fn on_cursor_movements(
                         }
                     }
                 } else {
-                    state
-                        .window
-                        .set_cursor_icon(winit::window::CursorIcon::Default);
+                    state.window.set_cursor(winit::window::CursorIcon::Default);
                     additional_state.mouse_resize_state = ResizeInteractionsState::None;
                 }
             }
         }
     } else {
-        state
-            .window
-            .set_cursor_icon(winit::window::CursorIcon::Default);
+        state.window.set_cursor(winit::window::CursorIcon::Default);
         additional_state.mouse_resize_state = ResizeInteractionsState::None;
     }
 }

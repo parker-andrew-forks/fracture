@@ -1,4 +1,6 @@
-use crate::gpu_mirror_display::postprocessing_shaders::PostprocessingErrors;
+use crate::gpu_mirror_display::{
+    defaults::CROP_COLOR, postprocessing_shaders::PostprocessingErrors,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -39,7 +41,7 @@ pub enum WindowBackground {
 
 impl Default for WindowBackground {
     fn default() -> Self {
-        WindowBackground::Color(0.9137255, 0.32941177, 0.1254902, 0.9)
+        WindowBackground::Color(CROP_COLOR.0, CROP_COLOR.1, CROP_COLOR.2, CROP_COLOR.3)
     }
 }
 
@@ -112,6 +114,12 @@ pub struct AdjCopy {
     pub page_size: f64,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum WindowInteractions {
+    Interactable,
+    PassThrough,
+}
+
 #[derive(Clone, Debug)]
 pub struct UiState {
     pub display_title: TitleBarDisplay,
@@ -128,6 +136,7 @@ pub struct UiState {
     pub magnify_filter: wgpu::FilterMode,
     pub minify_filter: wgpu::FilterMode,
     pub should_define_new_primary_sampler: bool,
+    pub window_interactions: WindowInteractions,
 }
 
 impl UiState {
@@ -150,6 +159,7 @@ impl UiState {
             window_background: temp.background,
             magnify_filter: temp.magnify_filter,
             minify_filter: temp.minify_filter,
+            window_interactions: temp.window_interactions,
         };
 
         temp
@@ -174,6 +184,7 @@ pub struct SetUiState {
     pub postprocessor: Option<Postprocessor>,
     pub magnify_filter: wgpu::FilterMode,
     pub minify_filter: wgpu::FilterMode,
+    pub window_interactions: WindowInteractions,
 }
 
 impl SetUiState {
@@ -195,6 +206,7 @@ impl SetUiState {
             postprocessor,
             magnify_filter,
             minify_filter,
+            window_interactions,
         } = temp;
 
         let mut temp = UiState {
@@ -212,6 +224,7 @@ impl SetUiState {
             magnify_filter,
             minify_filter,
             should_define_new_primary_sampler: true,
+            window_interactions,
         };
 
         if let Some(postprocessor) = &mut temp.postprocessor {
@@ -252,6 +265,7 @@ impl Default for UiState {
             magnify_filter: DEFAULT_MAGNIFY_FILTER,
             minify_filter: DEFAULT_MINIFY_FILTER,
             should_define_new_primary_sampler: false,
+            window_interactions: WindowInteractions::Interactable,
         }
     }
 }
@@ -282,6 +296,7 @@ pub struct CreateUiState {
     pub postprocessor: Option<String>,
     pub magnify_filter: wgpu::FilterMode,
     pub minify_filter: wgpu::FilterMode,
+    pub window_interactions: WindowInteractions,
 }
 
 impl Default for CreateUiState {
@@ -292,6 +307,7 @@ impl Default for CreateUiState {
             frame_transparency,
             green_screen,
             postprocessor,
+            window_interactions,
             background,
             need_rebuild: _,
             updated: _,
@@ -314,6 +330,7 @@ impl Default for CreateUiState {
                 .unwrap_or(None),
             magnify_filter,
             minify_filter,
+            window_interactions: window_interactions,
         }
     }
 }
@@ -329,6 +346,7 @@ impl Into<SetUiState> for CreateUiState {
             postprocessor,
             magnify_filter,
             minify_filter,
+            window_interactions,
         } = self;
 
         SetUiState {
@@ -344,6 +362,7 @@ impl Into<SetUiState> for CreateUiState {
             }),
             magnify_filter,
             minify_filter,
+            window_interactions: window_interactions,
         }
     }
 }

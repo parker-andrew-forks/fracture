@@ -24,6 +24,16 @@ use std::{
 use wgpu::FilterMode;
 
 pub fn run_settings_ui(ui: UiChannelSide) {
+    if let Ok(received_stream) = ui.stream_start_check_settings_ui.recv() {
+        if !received_stream {
+            println!("failed to select stream");
+
+            return;
+        }
+    } else {
+        return;
+    }
+
     let state = Rc::new(RefCell::new(UiState::default()));
     let new_state: Arc<Mutex<Receiver<UiState>>> = Arc::new(Mutex::new(ui.gpu_receiver_request));
 
@@ -90,6 +100,31 @@ pub fn run_settings_ui(ui: UiChannelSide) {
                 .title("🛠️")
                 .build();
 
+            let should_kill = Rc::new(RefCell::new(false));
+
+            // When GTK is occluded it is suspended. If the main application tries to close
+            // while GTK is suspended, it hangs until GTK is unsuspended. (When the occlusion ends)
+            // This stops this occlusion bug by (hopefully) safely closing GTK when it is suspended.
+            {
+                let should_kill = should_kill.clone();
+
+                window.connect_suspended_notify(move |w| match w.is_suspended() {
+                    true => {
+                        println!(
+                            "Attempting to close GTK because it was suspended by the compositer?"
+                        );
+
+                        if let Ok(ref mut should_kill) = should_kill.try_borrow_mut() {
+                            let should_kill: &mut bool = should_kill;
+                            *should_kill = true;
+                        }
+
+                        w.present_with_time(0);
+                    }
+                    false => {}
+                });
+            }
+
             window.set_child(Some(&rebuild(&Rc::clone(&state))));
 
             let state = state.clone();
@@ -98,6 +133,18 @@ pub fn run_settings_ui(ui: UiChannelSide) {
             let to_move = new_state_from_gpu.clone();
 
             window.add_tick_callback(move |window, _| {
+                // When GTK is occluded it is suspended. If the main application tries to close
+                // while GTK is suspended, it hangs until GTK is unsuspended. (When the occlusion ends)
+                // This stops this occlusion bug by (hopefully) safely closing GTK when it is suspended.
+                {
+                    if let Ok(should_kill) = should_kill.try_borrow() {
+                        let should_kill: bool = *should_kill;
+                        if should_kill {
+                            window.close();
+                        }
+                    }
+                }
+
                 {
                     if let Ok(recv) = to_move.lock().unwrap().try_recv() {
                         let before = { state.borrow().scroll_value.clone() };
@@ -286,11 +333,49 @@ pub fn rebuild(v: &Rc<RefCell<UiState>>) -> gtk::Box {
         wgpu::FilterMode::Nearest => nearest.set_active(true),
     }
 
-    // let title_opt = gtk::Box::builder()
     min_display.append(&nearest);
     min_display.append(&linear);
 
-    // container.append(&mirror_orientation);
+    let hittest = gtk::Box::builder()
+        .valign(gtk4::Align::Start)
+        .spacing(10)
+        .orientation(gtk4::Orientation::Horizontal)
+        .build();
+
+    let interact = gtk::ToggleButton::with_label("Interactable");
+    let pass = gtk::ToggleButton::with_label("PassThrough");
+
+    let v2 = v.clone();
+
+    interact.connect_clicked(move |_| {
+        let state = v2.clone();
+
+        let mut temp = state.borrow_mut();
+        let temp: &mut UiState = temp.update();
+
+        temp.window_interactions = WindowInteractions::Interactable;
+    });
+
+    let v2 = v.clone();
+
+    pass.connect_clicked(move |_| {
+        let state: Rc<RefCell<UiState>> = v2.clone();
+
+        let mut temp = state.borrow_mut();
+        let temp: &mut UiState = temp.update();
+
+        temp.window_interactions = WindowInteractions::PassThrough;
+    });
+
+    let v2 = v.clone();
+
+    match v2.borrow().window_interactions {
+        WindowInteractions::Interactable => interact.set_active(true),
+        WindowInteractions::PassThrough => pass.set_active(true),
+    }
+
+    hittest.append(&interact);
+    hittest.append(&pass);
 
     let aspect_ratio_display = gtk::Box::builder()
         .valign(gtk4::Align::Start)
@@ -1160,6 +1245,9 @@ pub fn rebuild(v: &Rc<RefCell<UiState>>) -> gtk::Box {
     base.append(&gtk::Label::new("minify_filter".into()));
     base.append(&min_display);
 
+    base.append(&gtk::Label::new("WindowInteractions".into()));
+    base.append(&hittest);
+
     base.append(&gtk::Label::new("[Debug] SetUiState".into()));
     let force_update = Button::with_label("Check SetUiState");
 
@@ -1287,6 +1375,7 @@ pub fn rebuild(v: &Rc<RefCell<UiState>>) -> gtk::Box {
             } else {
                 FilterMode::Linear
             },
+            window_interactions: WindowInteractions::Interactable,
         };
 
         let mut result = temp.build_new_full_settings_state();
