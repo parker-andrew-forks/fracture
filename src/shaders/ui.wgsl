@@ -168,10 +168,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         sub_x = max(sub_x, 0);
         sub_y = max(sub_y, 0);
 
+        // shade everything dark because the slection started
+        color = vec4(0, 0, 0, 0.5);
 
-
+        
         if u32(in.clip_position.x) >= u32(sub_x) && u32(in.clip_position.x) <= max_x + 5 && u32(in.clip_position.y) >= u32(sub_y) && u32(in.clip_position.y) <= max_y + 5 {
-            color = cut_color;//vec4(0.9137255, 0.32941177, 0.1254902, 1.0);
+            color = cut_color;
+
             in_cut_region = true;
         }
 
@@ -180,7 +183,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             color = color_temp;
 
             color.a = 0.0;
-        }
+        } 
 
         // displaying that crops outside of frame are snapping to dimensions of the frame
         if (flags.flagged & WaitingForCrop) != 0 {
