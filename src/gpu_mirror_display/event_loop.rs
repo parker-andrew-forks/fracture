@@ -56,6 +56,17 @@ impl ApplicationHandler<()> for State3 {
     fn user_event(&mut self, _: &ActiveEventLoop, _: ()) {}
 
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if let Ok(received_stream) = self.channels.stream_start_check_mirror_gpu.recv() {
+            if !received_stream {
+                println!("failed to select stream");
+
+                event_loop.exit();
+                return;
+            }
+        } else {
+            return;
+        }
+
         if self.window.is_some() {
             return;
         }
@@ -721,12 +732,19 @@ impl ApplicationHandler<()> for State3 {
 
     fn device_event(&mut self, _: &ActiveEventLoop, _: DeviceId, _: DeviceEvent) {}
 
-    fn about_to_wait(&mut self, _: &ActiveEventLoop) {
+    fn about_to_wait(&mut self, ev: &ActiveEventLoop) {
         match &self.window {
             Some(w) => {
                 w.request_redraw();
             }
-            None => todo!(),
+            None => {
+                if ev.exiting() {
+                    println!("shutting down");
+                    return;
+                } else {
+                    println!("idk what is happening ");
+                }
+            }
         }
 
         self.counter += 1;

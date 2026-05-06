@@ -24,6 +24,16 @@ use std::{
 use wgpu::FilterMode;
 
 pub fn run_settings_ui(ui: UiChannelSide) {
+    if let Ok(received_stream) = ui.stream_start_check_settings_ui.recv() {
+        if !received_stream {
+            println!("failed to select stream");
+
+            return;
+        }
+    } else {
+        return;
+    }
+
     let state = Rc::new(RefCell::new(UiState::default()));
     let new_state: Arc<Mutex<Receiver<UiState>>> = Arc::new(Mutex::new(ui.gpu_receiver_request));
 
