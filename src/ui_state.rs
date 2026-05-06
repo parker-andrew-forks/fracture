@@ -1,4 +1,4 @@
-use crate::gpu_mirror_display::postprocessing_shaders::PostprocessingErrors;
+use crate::gpu_mirror_display::{defaults::CROP_COLOR, postprocessing_shaders::PostprocessingErrors};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -39,7 +39,7 @@ pub enum WindowBackground {
 
 impl Default for WindowBackground {
     fn default() -> Self {
-        WindowBackground::Color(0.9137255, 0.32941177, 0.1254902, 0.9)
+        WindowBackground::Color(CROP_COLOR.0, CROP_COLOR.1, CROP_COLOR.2, CROP_COLOR.3)
     }
 }
 

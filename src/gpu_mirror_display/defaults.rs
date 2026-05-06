@@ -2,7 +2,7 @@ pub const APPLICATION_NAME: &'static str = "FRACTURE";
 
 pub const FP_ID: &'static str = "systems.fracture.launcher";
 
-pub const CROP_COLOR: (f32, f32, f32, f32) = (0.2, 0.5, 0.8, 0.9);
+pub const CROP_COLOR: (f32, f32, f32, f32) = (0.0, 0.1, 0.09600001, 0.9);
 
 pub const SELECTION_WINDOW_OFFSETS: (u32, u32) = (60, 60);
 

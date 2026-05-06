@@ -67,7 +67,7 @@ var<uniform> flags: UiRenderData;
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-
+    var cut_color = vec4(1.0, 1.0, 1.0, 1.0);
     var color = vec4(0.0, 0.0, 0.0, 0.0);
 
     color.a = color.a - (1.0 - flags.transparency);
@@ -171,7 +171,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
 
         if u32(in.clip_position.x) >= u32(sub_x) && u32(in.clip_position.x) <= max_x + 5 && u32(in.clip_position.y) >= u32(sub_y) && u32(in.clip_position.y) <= max_y + 5 {
-            color = vec4(0.9137255, 0.32941177, 0.1254902, 1.0);
+            color = cut_color;//vec4(0.9137255, 0.32941177, 0.1254902, 1.0);
             in_cut_region = true;
         }
 
