@@ -708,6 +708,15 @@ impl ApplicationHandler<()> for State3 {
                 state.window.set_decorations(false);
             }
 
+            match &additional_state.settings_state.window_interactions {
+                crate::ui_state::WindowInteractions::Interactable => {
+                    let _ = state.window.set_cursor_hittest(true);
+                }
+                crate::ui_state::WindowInteractions::PassThrough => {
+                    let _ = state.window.set_cursor_hittest(false);
+                }
+            }
+
             let rt = state.rt.take().unwrap();
             let render_pipeline_layout = state.pipeline_layout.take().unwrap();
 

@@ -333,11 +333,49 @@ pub fn rebuild(v: &Rc<RefCell<UiState>>) -> gtk::Box {
         wgpu::FilterMode::Nearest => nearest.set_active(true),
     }
 
-    // let title_opt = gtk::Box::builder()
     min_display.append(&nearest);
     min_display.append(&linear);
 
-    // container.append(&mirror_orientation);
+    let hittest = gtk::Box::builder()
+        .valign(gtk4::Align::Start)
+        .spacing(10)
+        .orientation(gtk4::Orientation::Horizontal)
+        .build();
+
+    let interact = gtk::ToggleButton::with_label("Interactable");
+    let pass = gtk::ToggleButton::with_label("PassThrough");
+
+    let v2 = v.clone();
+
+    interact.connect_clicked(move |_| {
+        let state = v2.clone();
+
+        let mut temp = state.borrow_mut();
+        let temp: &mut UiState = temp.update();
+
+        temp.window_interactions = WindowInteractions::Interactable;
+    });
+
+    let v2 = v.clone();
+
+    pass.connect_clicked(move |_| {
+        let state: Rc<RefCell<UiState>> = v2.clone();
+
+        let mut temp = state.borrow_mut();
+        let temp: &mut UiState = temp.update();
+
+        temp.window_interactions = WindowInteractions::PassThrough;
+    });
+
+    let v2 = v.clone();
+
+    match v2.borrow().window_interactions {
+        WindowInteractions::Interactable => interact.set_active(true),
+        WindowInteractions::PassThrough => pass.set_active(true),
+    }
+
+    hittest.append(&interact);
+    hittest.append(&pass);
 
     let aspect_ratio_display = gtk::Box::builder()
         .valign(gtk4::Align::Start)
@@ -1207,6 +1245,9 @@ pub fn rebuild(v: &Rc<RefCell<UiState>>) -> gtk::Box {
     base.append(&gtk::Label::new("minify_filter".into()));
     base.append(&min_display);
 
+    base.append(&gtk::Label::new("WindowInteractions".into()));
+    base.append(&hittest);
+
     base.append(&gtk::Label::new("[Debug] SetUiState".into()));
     let force_update = Button::with_label("Check SetUiState");
 
@@ -1334,6 +1375,7 @@ pub fn rebuild(v: &Rc<RefCell<UiState>>) -> gtk::Box {
             } else {
                 FilterMode::Linear
             },
+            window_interactions: WindowInteractions::Interactable,
         };
 
         let mut result = temp.build_new_full_settings_state();
