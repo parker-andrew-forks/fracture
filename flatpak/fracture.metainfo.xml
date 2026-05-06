@@ -43,8 +43,6 @@
         <p>color changes, pass through interactions to surface below, and improved stability</p>
       </description>
     </release>
-  </releases>
-  <releases>
     <release type="stable" version="0.0.1" date="2026-04-27T00:00:00Z">
       <description>
         <p>Initial release</p>
