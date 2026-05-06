@@ -9,7 +9,7 @@
   <url type="bugtracker">https://github.com/parker-bryce-andrew/fracture/issues</url>
   <url type="contribute">https://github.com/parker-bryce-andrew/fracture</url>
   <url type="vcs-browser">https://github.com/parker-bryce-andrew/fracture</url>
-  <url type="help">https://discord.gg/WK4TyB69</url>
+  <url type="help">https://programming.dev/c/fracture</url>
   <developer_name>Parker Andrew</developer_name>
   <!-- <branding>
     <color type="primary" scheme_preference="light">#FFFFFF</color>
@@ -27,7 +27,7 @@
     </p>
     <p>
       This release is an early version, if there are issues with it they can be reported with this
-      Discord server (https://discord.gg/WK4TyB69) or by posting issues on GitHub repository.
+      this forum (https://programming.dev/c/fracture) or by posting issues on the GitHub repository.
     </p>
     <p>
       Note: This application provides support to launch with the active window using a keyboard
@@ -37,6 +37,13 @@
       portal.
     </p>
   </description>
+  <releases>
+    <release type="stable" version="0.0.2" date="2026-05-6T00:00:00Z">
+      <description>
+        <p>color changes, pass through interactions to surface below, and improved stability</p>
+      </description>
+    </release>
+  </releases>
   <releases>
     <release type="stable" version="0.0.1" date="2026-04-27T00:00:00Z">
       <description>

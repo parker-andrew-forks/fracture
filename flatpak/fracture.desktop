@@ -6,4 +6,4 @@ Exec=/app/bin/launcher
 Icon=systems.fracture.launcher
 StartupWMClass=FRACTURE
 Categories=AudioVideo;Recorder;
-Keywords=Fracture;TopLevel;Wgsl;Rust;WebGPU;Shaders;Shading;Window;Cropping;Lock;Crop;PowerToys;Windows;
+Keywords=Fracture;TopLevel;Wgsl;Pip;Rust;WebGPU;Shaders;Shading;Window;Cropping;Lock;Crop;PowerToys;
