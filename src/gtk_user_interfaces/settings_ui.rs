@@ -20,170 +20,196 @@ use std::{
     cell::RefCell,
     rc::Rc,
     sync::{Arc, Mutex, mpsc::Receiver},
-    thread,
 };
 use wgpu::FilterMode;
 
-/// GTK suspends on occlusion. I don't think there's a way to wake it from
-/// suspension because Wayland on Gnome on Ubuntu prevents applications from taking
-/// focus on their own by default. When I tried exit it while it's suspended, it segfaults.
-///
-/// So instead of gracefully shutting it down, I just drop it's thread instead.
-fn kill_gtk(_: std::thread::JoinHandle<()>) {
-    println!("gtk dropped!");
-}
+pub fn run_settings_ui(ui: UiChannelSide) {
+    if let Ok(received_stream) = ui.stream_start_check_settings_ui.recv() {
+        if !received_stream {
+            println!("failed to select stream");
 
-pub fn run_settings_ui(mut ui: UiChannelSide) {
-    let kill_gtk_signal = ui.gtk_dropper.take().unwrap();
-
-    let gtk_handle = thread::spawn(move || {
-        if let Ok(received_stream) = ui.stream_start_check_settings_ui.recv() {
-            if !received_stream {
-                println!("failed to select stream");
-
-                return;
-            }
-        } else {
             return;
         }
+    } else {
+        return;
+    }
 
-        let state = Rc::new(RefCell::new(UiState::default()));
-        let new_state: Arc<Mutex<Receiver<UiState>>> =
-            Arc::new(Mutex::new(ui.gpu_receiver_request));
+    let state = Rc::new(RefCell::new(UiState::default()));
+    let new_state: Arc<Mutex<Receiver<UiState>>> = Arc::new(Mutex::new(ui.gpu_receiver_request));
 
-        'ui_loop: loop {
-            if let Ok(_) = ui.stop_settings_ui.try_recv() {
-                println!("Killing the Settings UI.");
+    'ui_loop: loop {
+        if let Ok(_) = ui.stop_settings_ui.try_recv() {
+            println!("Killing the Settings UI.");
 
-                break 'ui_loop;
-            }
+            break 'ui_loop;
+        }
 
-            // This is REALLY bad code to just make killing the settings ui easier
-            if let Err(e) = ui.start_signal_receiver.recv() {
-                println!(
-                    "The Settings UI is stopping because the channel was droppped: {:?}",
-                    e
-                );
+        // This is REALLY bad code to just make killing the settings ui easier
+        if let Err(e) = ui.start_signal_receiver.recv() {
+            println!(
+                "The Settings UI is stopping because the channel was droppped: {:?}",
+                e
+            );
 
-                println!("Killing the Settings UI.");
+            println!("Killing the Settings UI.");
 
-                break 'ui_loop;
-            }
+            break 'ui_loop;
+        }
 
-            while let Ok(_) = ui.start_signal_receiver.try_recv() {}
+        // let _ = ui.start_signal_receiver.recv().expect("msg");
+        let new_state_from_gpu = new_state.clone();
 
-            // let _ = ui.start_signal_receiver.recv().expect("msg");
-            let new_state_from_gpu = new_state.clone();
+        let application = gtk4::Application::builder()
+            .flags(ApplicationFlags::NON_UNIQUE)
+            .application_id("com.example.FirstGtkApp")
+            .build();
 
-            let application = gtk4::Application::builder()
-                .flags(ApplicationFlags::NON_UNIQUE)
-                .application_id("com.example.FirstGtkApp")
-                .build();
+        let state = state.clone();
 
-            let state = state.clone();
+        {
+            while let Ok(value) = { new_state.lock().unwrap().try_recv() } {
+                {
+                    *state.borrow_mut() = value;
+                }
 
-            {
-                while let Ok(value) = { new_state.lock().unwrap().try_recv() } {
-                    {
-                        *state.borrow_mut() = value;
-                    }
-
-                    let should_open = { state.borrow().open_settings_ui.clone() };
-                    if let Some(v) = should_open {
-                        if v {
-                            state.borrow_mut().open_settings_ui = None;
-                        }
+                let should_open = { state.borrow().open_settings_ui.clone() };
+                if let Some(v) = should_open {
+                    if v {
+                        state.borrow_mut().open_settings_ui = None;
                     }
                 }
             }
+        }
 
-            let gpu_channel_sender = ui.updated_state_sender.clone();
+        let gpu_channel_sender = ui.updated_state_sender.clone();
 
-            application.connect_activate(move |app| {
-                let provider = gtk4::CssProvider::new();
-                let css = include_str!("../../css/border.css");
+        application.connect_activate(move |app| {
+            let provider = gtk4::CssProvider::new();
+            let css = include_str!("../../css/border.css");
 
-                provider.load_from_string(css);
+            provider.load_from_string(css);
 
-                gtk::style_context_add_provider_for_display(
-                    &Display::default().expect("Could not connect to a display."),
-                    &provider,
-                    gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
-                );
+            gtk::style_context_add_provider_for_display(
+                &Display::default().expect("Could not connect to a display."),
+                &provider,
+                gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+            );
 
-                let window = ApplicationWindow::builder()
-                    .application(app)
-                    .title("🛠️")
-                    .build();
+            let window = ApplicationWindow::builder()
+                .application(app)
+                .title("🛠️")
+                .build();
 
-                window.set_child(Some(&rebuild(&Rc::clone(&state))));
+            let should_kill = Rc::new(RefCell::new(false));
 
-                let state = state.clone();
-                let gpu_channel_sender = gpu_channel_sender.clone();
+            // When GTK is occluded it is suspended. If the main application tries to close
+            // while GTK is suspended, it hangs until GTK is unsuspended. (When the occlusion ends)
+            // This stops this occlusion bug by (hopefully) safely closing GTK when it is suspended.
+            {
+                let should_kill = should_kill.clone();
 
-                let to_move = new_state_from_gpu.clone();
+                window.connect_suspended_notify(move |w| match w.is_suspended() {
+                    true => {
+                        println!(
+                            "Attempting to close GTK because it was suspended by the compositer?"
+                        );
 
-                window.add_tick_callback(move |window, _| {
-                    {
-                        if let Ok(recv) = to_move.lock().unwrap().try_recv() {
-                            let before = { state.borrow().scroll_value.clone() };
-
-                            *state.borrow_mut() = recv;
-
-                            state.borrow_mut().scroll_value = before;
-                        }
-                    }
-
-                    let should_rebuild = state.borrow().need_rebuild;
-                    let should_send_state = state.borrow().updated;
-                    let should_restart = state.borrow().open_settings_ui;
-
-                    if should_send_state {
-                        {
-                            let temp: &UiState = &state.borrow();
-                            let temp: UiState = temp.clone();
-
-                            if let Err(e) = gpu_channel_sender.send(temp) {
-                                println!("The receiver for the GPU was dropped: {:?}", e);
-                            }
-                        }
-                        state.borrow_mut().updated = false;
-                    }
-                    // window.
-
-                    if should_rebuild {
-                        window.set_child(Some(&rebuild(&Rc::clone(&state))));
-
-                        {
-                            let temp: &UiState = &state.borrow();
-                            let temp: UiState = temp.clone();
-
-                            if let Err(e) = gpu_channel_sender.send(temp) {
-                                println!("The sender for the GPU was dropped: {:?}", e);
-                            }
+                        if let Ok(ref mut should_kill) = should_kill.try_borrow_mut() {
+                            let should_kill: &mut bool = should_kill;
+                            *should_kill = true;
                         }
 
-                        state.borrow_mut().need_rebuild = false;
                     }
-
-                    if let Some(_restart_signal) = should_restart {
-                        state.borrow_mut().open_settings_ui = None;
-                        window.close();
-                    }
-
-                    glib::ControlFlow::Continue
+                    false => {}
                 });
+            }
 
-                window.present();
-                // window.close
+            let window = Rc::new(window);
+            let glib_window = window.clone();
+
+            glib::timeout_add_local(std::time::Duration::from_secs(1), move || {
+                // When GTK is occluded it is suspended. If the main application tries to close
+                // while GTK is suspended, it hangs until GTK is unsuspended. (When the occlusion ends)
+                // This stops this occlusion bug by (hopefully) safely closing GTK when it is suspended.
+                {
+                    if let Ok(should_kill) = should_kill.try_borrow() {
+                        let should_kill: bool = *should_kill;
+                        if should_kill {
+                            println!("Killing GTK because it's occluded and my code is not conventional. I'm usin GTK in ways they didn't intend.");
+
+                            glib_window.close();
+
+                            return ControlFlow::Break;
+                        }
+                    }
+                }
+
+                ControlFlow::Continue
             });
 
-            application.run();
-        }
-    });
+            window.set_child(Some(&rebuild(&Rc::clone(&state))));
 
-    if let Ok(_) = kill_gtk_signal.recv() {
-        kill_gtk(gtk_handle);
+            let state = state.clone();
+            let gpu_channel_sender = gpu_channel_sender.clone();
+
+            let to_move = new_state_from_gpu.clone();
+
+            window.add_tick_callback(move |window, _| {
+                {
+                    if let Ok(recv) = to_move.lock().unwrap().try_recv() {
+                        let before = { state.borrow().scroll_value.clone() };
+
+                        *state.borrow_mut() = recv;
+
+                        state.borrow_mut().scroll_value = before;
+                    }
+                }
+
+                let should_rebuild = state.borrow().need_rebuild;
+                let should_send_state = state.borrow().updated;
+                let should_restart = state.borrow().open_settings_ui;
+
+                if should_send_state {
+                    {
+                        let temp: &UiState = &state.borrow();
+                        let temp: UiState = temp.clone();
+
+                        if let Err(e) = gpu_channel_sender.send(temp) {
+                            println!("The receiver for the GPU was dropped: {:?}", e);
+                        }
+                    }
+                    state.borrow_mut().updated = false;
+                }
+                // window.
+
+                if should_rebuild {
+                    window.set_child(Some(&rebuild(&Rc::clone(&state))));
+
+                    {
+                        let temp: &UiState = &state.borrow();
+                        let temp: UiState = temp.clone();
+
+                        if let Err(e) = gpu_channel_sender.send(temp) {
+                            println!("The sender for the GPU was dropped: {:?}", e);
+                        }
+                    }
+
+                    state.borrow_mut().need_rebuild = false;
+                }
+
+                if let Some(_restart_signal) = should_restart {
+                    state.borrow_mut().open_settings_ui = None;
+                    window.close();
+                }
+
+                glib::ControlFlow::Continue
+            });
+
+            window.present();
+            // window.close
+        });
+
+        application.run();
     }
 }
 
