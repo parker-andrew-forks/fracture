@@ -25,6 +25,7 @@ pub struct GpuChannelSide {
     pub ui_shutdown_conf: std::sync::mpsc::Receiver<()>,
     pub dbus_shutdown_conf: std::sync::mpsc::Receiver<()>,
     pub stream_start_check_mirror_gpu: std::sync::mpsc::Receiver<bool>,
+    pub drop_gtk_ui: std::sync::mpsc::Sender<()>,
 }
 
 pub struct UiChannelSide {
@@ -34,6 +35,7 @@ pub struct UiChannelSide {
     pub stop_settings_ui: std::sync::mpsc::Receiver<()>,
     pub shutdown_confirmed: std::sync::mpsc::Sender<()>,
     pub stream_start_check_settings_ui: std::sync::mpsc::Receiver<bool>,
+    pub gtk_dropper: Option<std::sync::mpsc::Receiver<()>>,
 }
 
 pub struct DbusSide {
@@ -62,6 +64,7 @@ impl ApplicationChannelsCreator {
         let (s11, r11) = std::sync::mpsc::channel::<_>();
         let (s12, r12) = std::sync::mpsc::channel::<_>();
         let (s13, r13) = std::sync::mpsc::channel::<_>();
+        let (s14, r14) = std::sync::mpsc::channel::<_>();
 
         (
             GpuChannelSide {
@@ -77,6 +80,7 @@ impl ApplicationChannelsCreator {
                 ui_shutdown_conf: r10,
                 dbus_shutdown_conf: r11,
                 stream_start_check_mirror_gpu: r12,
+                drop_gtk_ui: s14,
             },
             UiChannelSide {
                 start_signal_receiver: r1,
@@ -85,6 +89,7 @@ impl ApplicationChannelsCreator {
                 stop_settings_ui: r6,
                 shutdown_confirmed: s10,
                 stream_start_check_settings_ui: r13,
+                gtk_dropper: Some(r14),
             },
             DbusSide {
                 predicted_frame_fmt_sender: s4,

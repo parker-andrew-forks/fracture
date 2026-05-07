@@ -123,4 +123,6 @@ fn main() {
 
     window_recording_handle.join().unwrap();
     gtk_user_interfaces_handle.join().unwrap();
+
+    println!("Successful shutdown.");
 }
