@@ -1,4 +1,8 @@
+use std::env;
+
 use winit::event_loop::ActiveEventLoop;
+
+use crate::global_application_state::SAFE_MODE;
 
 use super::state::{AdditionalRenderingState, State};
 
@@ -40,7 +44,13 @@ pub fn shutdown(ev: &ActiveEventLoop, _state: &State, additional: &AdditionalRen
 
     println!("gtk ui and pipewire shutdown confirmed");
 
-    // This does something that conflicts with gtk. If this doesn't happen after gtk has
-    // gracefully shutdown or dropped then it will segfault on the gtk thread.
+    // This is added because exiting the event loop segfaults sometimes, but I don't want to report it to the user.
+    {
+        unsafe {
+            env::set_var(SAFE_MODE, "1");
+        }
+    }
+
+    // This segfaults sometimes. I don't know what's wrong.
     ev.exit();
 }
