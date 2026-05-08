@@ -42,6 +42,7 @@ pub enum WrappedBridge {
 #[derive(Clone)]
 pub struct WebGpuReport {
     pub formats: Option<Vec<SupportedFormat>>,
+    pub using_bridge: bool,
 }
 
 struct State3 {
@@ -99,13 +100,22 @@ impl ApplicationHandler<()> for State3 {
 
                 let report = WebGpuReport {
                     formats: Some(report),
+                    using_bridge: true,
                 };
 
                 self.channels.webgpu_drm_report.send(report).unwrap();
 
                 println!("Sync: {:?}", bridge.sync_capabilities())
             }
-            WrappedBridge::Direct => println!("Sync: Direct Wgpu, no sync available"),
+            WrappedBridge::Direct => {
+                let report = WebGpuReport {
+                    formats: None,
+                    using_bridge: false,
+                };
+
+                self.channels.webgpu_drm_report.send(report).unwrap();
+                println!("Sync: Direct Wgpu, no sync available")
+            }
         }
 
         // before starting, wait for the video format
