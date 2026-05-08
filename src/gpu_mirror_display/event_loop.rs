@@ -56,6 +56,10 @@ impl ApplicationHandler<()> for State3 {
     fn user_event(&mut self, _: &ActiveEventLoop, _: ()) {}
 
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.window.is_some() {
+            return;
+        }
+
         if let Ok(received_stream) = self.channels.stream_start_check_mirror_gpu.recv() {
             if !received_stream {
                 println!("failed to select stream");
@@ -64,10 +68,6 @@ impl ApplicationHandler<()> for State3 {
                 return;
             }
         } else {
-            return;
-        }
-
-        if self.window.is_some() {
             return;
         }
 
