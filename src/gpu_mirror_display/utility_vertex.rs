@@ -54,8 +54,24 @@ pub fn calculate_frame_transformations_for_settings(
     if crop.size.width as u32 == width && crop.size.height <= height
         || crop.size.height as u32 == height && crop.size.width as u32 <= width
     {
-        // if (crop.size.0 as u32, crop.size.1 as u32) == (width, height) {
         temp = (VERTICES.to_vec(), TextureTransformed::NoTextureTransform);
+
+        // except when the aspect ratio isn't supposed to be maintanied.
+        match &settings_state.aspect_ratio {
+            VideoAspect::DoNotMaintainAspect => {
+                if !(crop.size.width as u32 == width
+                    && crop.size.height <= height
+                    && crop.size.height as u32 == height
+                    && crop.size.width as u32 <= width)
+                {
+                    temp = (
+                        VERTICES.to_vec(),
+                        TextureTransformed::TextureTransformedByVerts,
+                    );
+                }
+            }
+            _ => {}
+        }
     }
 
     temp
