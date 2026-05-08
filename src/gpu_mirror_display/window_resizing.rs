@@ -1,6 +1,9 @@
 use crate::{
     global_application_state::LastReported,
-    gpu_mirror_display::{utility_vertex::{VERTICES, center_verticies, position_centered_verts}, window_cropping::Size},
+    gpu_mirror_display::{
+        utility_vertex::{VERTICES, center_verticies, position_centered_verts},
+        window_cropping::Size,
+    },
     ui_state::{ScaleDecision, UiState, VideoAspect, VideoLocation, WindowBehaviour},
 };
 use std::sync::Arc;

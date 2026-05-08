@@ -18,6 +18,7 @@ pub fn start_crop_selection(additional_state: &mut AdditionalRenderingState, sta
     state.window.set_minimized(false);
 
     additional_state.crop_button_pressed = true;
+    additional_state.new_settings = true;
 
     additional_state.settings_state = UiState {
         display_title: TitleBarDisplay::TitleBarVisible,
@@ -28,7 +29,7 @@ pub fn start_crop_selection(additional_state: &mut AdditionalRenderingState, sta
         frame_transparency: 100.0,
         need_rebuild: true,
         updated: true,
-        open_settings_ui: Some(false),
+
         green_screen: crate::ui_state::GreenScreen::None,
         postprocessor: Default::default(),
         background: WindowBackground::Color(CROP_COLOR.0, CROP_COLOR.1, CROP_COLOR.2, CROP_COLOR.3),
@@ -40,6 +41,8 @@ pub fn start_crop_selection(additional_state: &mut AdditionalRenderingState, sta
         .gpu_sender_request
         .send(additional_state.settings_state.clone())
         .unwrap();
+
+    additional_state.shutdown_settings_ui();
 
     additional_state.cropped = Some(CroppedArea {
         relative_to_window_position: InitialAbsoluteWindowPosition { x: 0, y: 0 },
@@ -229,7 +232,6 @@ pub fn if_in_crop_complete_crop(
                 frame_transparency: 100.0,
                 need_rebuild: true,
                 updated: true,
-                open_settings_ui: None,
                 green_screen: crate::ui_state::GreenScreen::None,
                 postprocessor: Default::default(),
                 ..Default::default()
