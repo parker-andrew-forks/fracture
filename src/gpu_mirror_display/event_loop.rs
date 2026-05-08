@@ -594,7 +594,7 @@ impl ApplicationHandler<()> for State3 {
                 frame_transparency: 100.0,
                 need_rebuild: true,
                 updated: true,
-                open_settings_ui: None,
+                // open_settings_ui: None,
                 green_screen: crate::ui_state::GreenScreen::None,
                 postprocessor: Default::default(),
                 background: WindowBackground::Color(

@@ -92,18 +92,7 @@ pub fn write_ui_texture_and_handle_ui_actions(
                 &img_position,
                 &binary_images::ICON_GEAR_NO_FILL,
             ) {
-                let mut current = additional.settings_state.clone();
-                current.open_settings_ui = Some(true);
-                additional
-                    .channels
-                    .gpu_sender_request
-                    .send(current)
-                    .expect("Settings thread stays");
-                additional
-                    .channels
-                    .start_settings_ui
-                    .send(())
-                    .expect("Thread should stay open for entire program duration.");
+                additional.open_settings_ui();
             }
         }
 

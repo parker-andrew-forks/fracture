@@ -4,6 +4,7 @@ use super::{
 use crate::{
     application_channel_creator::GpuChannelSide,
     gpu_mirror_display::event_loop::WrappedBridge,
+    gtk_user_interfaces::settings_ui::SETTINGS_IS_RUNNING,
     stream_creation::utility_gnome_video_frame::PredictedWgpuFrameFormat,
     ui_state::{GreenScreen, TitleBarDisplay, UiState, VideoAspect, WindowBehaviour},
 };
@@ -155,5 +156,45 @@ impl AdditionalRenderingState {
         }
 
         active_ui_flags
+    }
+
+    pub fn open_settings_ui(&self) {
+        let before = self.settings_state.clone();
+
+        self.channels
+            .gpu_sender_request
+            .send(before)
+            .expect("Settings thread stays");
+
+        let is_active = { *SETTINGS_IS_RUNNING.lock().unwrap() };
+
+        if is_active {
+            self.shutdown_settings_ui();
+        }
+
+        let (s, r) = std::sync::mpsc::channel::<_>();
+
+        let _ = self.channels.start_settings_ui.send(s);
+
+        let _ = r.recv();
+    }
+
+    pub fn shutdown_settings_ui(&self) {
+        let is_active = *SETTINGS_IS_RUNNING.lock().unwrap();
+
+        if is_active {
+            let before = self.settings_state.clone();
+
+            self.channels
+                .gpu_sender_request
+                .send(before)
+                .expect("Settings thread stays");
+
+            let (s, r) = std::sync::mpsc::channel::<_>();
+
+            let _ = self.channels.kill_with_confirm.send(s);
+
+            let _ = r.recv();
+        }
     }
 }

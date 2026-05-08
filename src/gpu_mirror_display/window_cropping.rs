@@ -19,6 +19,8 @@ pub fn start_crop_selection(additional_state: &mut AdditionalRenderingState, sta
 
     additional_state.crop_button_pressed = true;
 
+    additional_state.shutdown_settings_ui();
+
     additional_state.settings_state = UiState {
         display_title: TitleBarDisplay::TitleBarVisible,
         aspect_ratio: VideoAspect::MaintainAspectRatio(
@@ -28,7 +30,7 @@ pub fn start_crop_selection(additional_state: &mut AdditionalRenderingState, sta
         frame_transparency: 100.0,
         need_rebuild: true,
         updated: true,
-        open_settings_ui: Some(false),
+
         green_screen: crate::ui_state::GreenScreen::None,
         postprocessor: Default::default(),
         background: WindowBackground::Color(CROP_COLOR.0, CROP_COLOR.1, CROP_COLOR.2, CROP_COLOR.3),
@@ -229,7 +231,6 @@ pub fn if_in_crop_complete_crop(
                 frame_transparency: 100.0,
                 need_rebuild: true,
                 updated: true,
-                open_settings_ui: None,
                 green_screen: crate::ui_state::GreenScreen::None,
                 postprocessor: Default::default(),
                 ..Default::default()

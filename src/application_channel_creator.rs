@@ -13,7 +13,7 @@ use crate::{
 pub struct ApplicationChannelsCreator;
 
 pub struct GpuChannelSide {
-    pub start_settings_ui: std::sync::mpsc::Sender<()>,
+    pub start_settings_ui: std::sync::mpsc::Sender<std::sync::mpsc::Sender<()>>,
     pub new_settings_receiver: std::sync::mpsc::Receiver<UiState>,
     pub gpu_sender_request: std::sync::mpsc::Sender<UiState>,
     pub predicted_frame_fmt_receiver: std::sync::mpsc::Receiver<PredictedWgpuFrameFormat>,
@@ -25,15 +25,17 @@ pub struct GpuChannelSide {
     pub ui_shutdown_conf: std::sync::mpsc::Receiver<()>,
     pub dbus_shutdown_conf: std::sync::mpsc::Receiver<()>,
     pub stream_start_check_mirror_gpu: std::sync::mpsc::Receiver<bool>,
+    pub kill_with_confirm: std::sync::mpsc::Sender<std::sync::mpsc::Sender<()>>,
 }
 
 pub struct UiChannelSide {
-    pub start_signal_receiver: std::sync::mpsc::Receiver<()>,
+    pub start_signal_receiver: std::sync::mpsc::Receiver<std::sync::mpsc::Sender<()>>,
     pub updated_state_sender: std::sync::mpsc::Sender<UiState>,
     pub gpu_receiver_request: std::sync::mpsc::Receiver<UiState>,
     pub stop_settings_ui: std::sync::mpsc::Receiver<()>,
     pub shutdown_confirmed: std::sync::mpsc::Sender<()>,
     pub stream_start_check_settings_ui: std::sync::mpsc::Receiver<bool>,
+    pub kill_with_confirm_recv: std::sync::mpsc::Receiver<std::sync::mpsc::Sender<()>>,
 }
 
 pub struct DbusSide {
@@ -62,6 +64,7 @@ impl ApplicationChannelsCreator {
         let (s11, r11) = std::sync::mpsc::channel::<_>();
         let (s12, r12) = std::sync::mpsc::channel::<_>();
         let (s13, r13) = std::sync::mpsc::channel::<_>();
+        let (s14, r14) = std::sync::mpsc::channel::<_>();
 
         (
             GpuChannelSide {
@@ -77,6 +80,7 @@ impl ApplicationChannelsCreator {
                 ui_shutdown_conf: r10,
                 dbus_shutdown_conf: r11,
                 stream_start_check_mirror_gpu: r12,
+                kill_with_confirm: s14,
             },
             UiChannelSide {
                 start_signal_receiver: r1,
@@ -85,6 +89,7 @@ impl ApplicationChannelsCreator {
                 stop_settings_ui: r6,
                 shutdown_confirmed: s10,
                 stream_start_check_settings_ui: r13,
+                kill_with_confirm_recv: r14,
             },
             DbusSide {
                 predicted_frame_fmt_sender: s4,
