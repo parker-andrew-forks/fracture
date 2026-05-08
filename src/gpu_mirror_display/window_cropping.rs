@@ -18,8 +18,7 @@ pub fn start_crop_selection(additional_state: &mut AdditionalRenderingState, sta
     state.window.set_minimized(false);
 
     additional_state.crop_button_pressed = true;
-
-    additional_state.shutdown_settings_ui();
+    additional_state.new_settings = true;
 
     additional_state.settings_state = UiState {
         display_title: TitleBarDisplay::TitleBarVisible,
@@ -42,6 +41,8 @@ pub fn start_crop_selection(additional_state: &mut AdditionalRenderingState, sta
         .gpu_sender_request
         .send(additional_state.settings_state.clone())
         .unwrap();
+
+    additional_state.shutdown_settings_ui();
 
     additional_state.cropped = Some(CroppedArea {
         relative_to_window_position: InitialAbsoluteWindowPosition { x: 0, y: 0 },
