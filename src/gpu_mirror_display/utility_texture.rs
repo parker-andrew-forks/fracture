@@ -73,7 +73,7 @@ pub(crate) fn define_frame<'a>(
     let overlay = OverlayImage {
         data: &data,
         dimensions: Extent3d {
-            width: cropped.size.width + cropped.relative_to_frame_position.x,
+            width: cropped.size.width + cropped.relative_to_frame_position.x,  
             height: cropped.size.height + cropped.relative_to_frame_position.y,
             depth_or_array_layers: 1,
         },
