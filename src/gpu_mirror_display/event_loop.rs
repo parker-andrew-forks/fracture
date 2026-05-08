@@ -42,6 +42,7 @@ pub enum WrappedBridge {
 #[derive(Clone)]
 pub struct WebGpuReport {
     pub formats: Option<Vec<SupportedFormat>>,
+    pub using_bridge: bool,
 }
 
 struct State3 {
@@ -56,6 +57,10 @@ impl ApplicationHandler<()> for State3 {
     fn user_event(&mut self, _: &ActiveEventLoop, _: ()) {}
 
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.window.is_some() {
+            return;
+        }
+
         if let Ok(received_stream) = self.channels.stream_start_check_mirror_gpu.recv() {
             if !received_stream {
                 println!("failed to select stream");
@@ -64,10 +69,6 @@ impl ApplicationHandler<()> for State3 {
                 return;
             }
         } else {
-            return;
-        }
-
-        if self.window.is_some() {
             return;
         }
 
@@ -99,13 +100,22 @@ impl ApplicationHandler<()> for State3 {
 
                 let report = WebGpuReport {
                     formats: Some(report),
+                    using_bridge: true,
                 };
 
                 self.channels.webgpu_drm_report.send(report).unwrap();
 
                 println!("Sync: {:?}", bridge.sync_capabilities())
             }
-            WrappedBridge::Direct => println!("Sync: Direct Wgpu, no sync available"),
+            WrappedBridge::Direct => {
+                let report = WebGpuReport {
+                    formats: None,
+                    using_bridge: false,
+                };
+
+                self.channels.webgpu_drm_report.send(report).unwrap();
+                println!("Sync: Direct Wgpu, no sync available")
+            }
         }
 
         // before starting, wait for the video format
@@ -594,7 +604,7 @@ impl ApplicationHandler<()> for State3 {
                 frame_transparency: 100.0,
                 need_rebuild: true,
                 updated: true,
-                open_settings_ui: None,
+                // open_settings_ui: None,
                 green_screen: crate::ui_state::GreenScreen::None,
                 postprocessor: Default::default(),
                 background: WindowBackground::Color(

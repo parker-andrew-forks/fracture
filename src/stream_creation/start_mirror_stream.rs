@@ -24,7 +24,6 @@ use pw::{properties::properties, spa};
 use smithay::reexports::ash::vk::Format;
 use std::{
     collections::HashMap,
-    env,
     os::{
         fd::{FromRawFd, OwnedFd},
         raw::c_int,
@@ -766,13 +765,11 @@ pub fn start_mirroring(
 
     println!("blocked here");
 
-    let report = if let Err(_) = env::var(SAFE_MODE) {
-        Some(dbus_channels.webgpu_report_receiver.recv().unwrap())
-    } else {
-        println!("skipping report because SAFE_MODE");
+    let mut report = Some(dbus_channels.webgpu_report_receiver.recv().unwrap());
 
-        None
-    };
+    if !report.as_ref().unwrap().using_bridge {
+        report = None;
+    }
 
     println!("report recv");
 
@@ -880,9 +877,17 @@ pub fn start_mirroring(
     };
 
     if let Some(mods) = mods {
+        println!("DmaBuffer modifiers are specified.");
+
         if let Err(_) = std::env::var(SAFE_MODE) {
+            println!("Attempting to use DmaBuffer modifiers with pipewire.");
+
             obj.properties.push(mods);
+        } else {
+            println!("Skipping DmaBuffer modifiers with pipewire because SAFE_MODE is active.");
         }
+    } else {
+        println!("DmaBuffer modifiers are missing.");
     }
 
     println!("Created stream {:#?}", stream);

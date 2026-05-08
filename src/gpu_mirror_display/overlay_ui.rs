@@ -47,7 +47,7 @@ pub fn write_ui_texture_and_handle_ui_actions(
     let mut found_hover = false;
 
     if *&additional.crop_button_pressed {
-        let x: i32 = (width as i32 / 2)
+        /*         let x: i32 = (width as i32 / 2)
             - (binary_images::ICON_SELECT_SCREEN_AREA.dimensions.width / 2) as i32;
         let y: i32 = (height as i32 / 2)
             - (binary_images::ICON_SELECT_SCREEN_AREA.dimensions.height / 2) as i32;
@@ -57,7 +57,7 @@ pub fn write_ui_texture_and_handle_ui_actions(
             &texture,
             &binary_images::ICON_SELECT_SCREEN_AREA,
             (x, y),
-        );
+        ); */
     } else if *&additional.mouse_over_screen {
         // settings button
         {
@@ -92,18 +92,7 @@ pub fn write_ui_texture_and_handle_ui_actions(
                 &img_position,
                 &binary_images::ICON_GEAR_NO_FILL,
             ) {
-                let mut current = additional.settings_state.clone();
-                current.open_settings_ui = Some(true);
-                additional
-                    .channels
-                    .gpu_sender_request
-                    .send(current)
-                    .expect("Settings thread stays");
-                additional
-                    .channels
-                    .start_settings_ui
-                    .send(())
-                    .expect("Thread should stay open for entire program duration.");
+                additional.open_settings_ui();
             }
         }
 

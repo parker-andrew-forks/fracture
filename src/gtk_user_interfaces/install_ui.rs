@@ -441,10 +441,7 @@ fn rebuild(state: Rc<RefCell<StartupState>>, scheduler: CustomGtkScheduler) -> g
                 let path = format!("/todo/fix/my/path");
 
                 #[cfg(feature = "flatpak")]
-                let path = format!(
-                    "flatpak run {}",
-                    crate::gpu_mirror_display::defaults::FP_ID
-                );
+                let path = format!("flatpak run {}", crate::gpu_mirror_display::defaults::FP_ID);
 
                 let _result = gnome_custom_keybindings::add_binding(
                     "<Shift><Control><Super>s",
