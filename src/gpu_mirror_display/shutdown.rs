@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use winit::event_loop::ActiveEventLoop;
 
 use super::state::{AdditionalRenderingState, State};
@@ -6,37 +8,118 @@ pub fn start_shutdown(s: &mut State) {
     s.should_shutdown = true;
 }
 
-pub fn shutdown(ev: &ActiveEventLoop, _state: &State, additional: &AdditionalRenderingState) {
+#[derive(Debug)]
+pub struct ShutdownResult {
+    gtk_settings_ui: Result<(), SettingsGtkShutdownErr>,
+    pipewire_threads: Result<(), PipewireShutdownErr>,
+}
+
+#[derive(Debug)]
+pub enum SettingsGtkShutdownErr {
+    ThreadAlreadyTerminated,
+    Disconnected(std::sync::mpsc::RecvTimeoutError),
+    FailedWithinTimeLimit,
+}
+
+#[derive(Debug)]
+pub enum PipewireShutdownErr {
+    ThreadAlreadyTerminated,
+    ThreadTerminatedAfterSendingSignalToEnd(std::sync::mpsc::RecvError),
+}
+
+pub fn shutdown(
+    ev: &ActiveEventLoop,
+    _state: &State,
+    additional: &AdditionalRenderingState,
+) -> Result<ShutdownResult, ShutdownResult> {
     println!("Shutting down.");
 
-    let _ = additional.channels.terminate_pipewire_stream.send(());
-    let _ = additional.channels.terminate_settings_ui.send(());
+    let pw_1 = additional.channels.terminate_pipewire_stream.send(());
+    let gtk_1 = additional.channels.terminate_settings_ui.send(());
 
-    {
-        // The termination check is completed when starting
-        let r1 = additional.open_settings_ui();
-        let r2 = additional.shutdown_settings_ui();
+    let gtk;
 
-        // There's a case where the termination signal kills the thread before the channels are used. There
-        // was an expect in the open and closing, so now I'm checking the errors reported to make sure
-        // I didn't make any other mistakes that I didn't expect.
-        if r1.is_err() || r2.is_err() {
-            let result = (r1, r2);
-            println!(
-                "The Setting UI is predicted to have shutdown already: {:#?}",
-                result
-            );
+    let mut count = 0;
+
+    if gtk_1.is_ok() {
+        'bad_logic_loop: loop {
+            count += 1;
+
+            // The termination check is completed when starting
+            let r1 = additional.open_settings_ui();
+            let r2 = additional.shutdown_settings_ui();
+
+            // There's a case where the termination signal kills the thread before the channels are used. There
+            // was an expect in the open and closing, so now I'm checking the errors reported to make sure
+            // I didn't make any other mistakes that I didn't expect.
+            if r1.is_err() || r2.is_err() {
+                let result = (r1, r2);
+                println!(
+                    "The Setting UI is predicted to have shutdown already: {:#?}",
+                    result
+                );
+            }
+
+            match additional
+                .channels
+                .ui_shutdown_conf
+                .recv_timeout(Duration::from_millis(100))
+            {
+                Ok(_) => {
+                    gtk = Ok(());
+                    break 'bad_logic_loop;
+                }
+                Err(e) => match e {
+                    std::sync::mpsc::RecvTimeoutError::Timeout => {
+                        if count > 30 {
+                            gtk = Err(SettingsGtkShutdownErr::FailedWithinTimeLimit);
+                            break 'bad_logic_loop;
+                        }
+                    }
+                    std::sync::mpsc::RecvTimeoutError::Disconnected => {
+                        gtk = Err(SettingsGtkShutdownErr::Disconnected(
+                            std::sync::mpsc::RecvTimeoutError::Disconnected,
+                        ));
+                        break 'bad_logic_loop;
+                    }
+                },
+            }
         }
+    } else {
+        gtk = Err(SettingsGtkShutdownErr::ThreadAlreadyTerminated);
     }
 
-    // wait for signals or channel errors
-    let res = additional.channels.ui_shutdown_conf.recv();
+    // println!("Result of stopping the settings ui: {:#?}", gtk);
 
-    println!("The Settings UI is predicted as shutdown: {:#?}", res);
+    let pw;
 
-    let res = additional.channels.dbus_shutdown_conf.recv();
+    if pw_1.is_ok() {
+        match additional.channels.dbus_shutdown_conf.recv() {
+            Ok(_) => pw = Ok(()),
+            Err(e) => pw = Err(PipewireShutdownErr::ThreadTerminatedAfterSendingSignalToEnd(e)),
+        }
+    } else {
+        pw = Err(PipewireShutdownErr::ThreadAlreadyTerminated);
+    }
 
-    println!("Pipewire is predicted as shutdown: {:#?}", res);
+    // println!("Pipewire is predicted as shutdown: {:#?}", pw);
+
+    let full = ShutdownResult {
+        gtk_settings_ui: gtk,
+        pipewire_threads: pw,
+    };
+
+    let wrapped;
+
+    if full.gtk_settings_ui.is_ok() && full.pipewire_threads.is_ok() {
+        wrapped = Ok(full);
+    } else {
+        wrapped = Err(full);
+    }
+
+    println!("{:#?}", wrapped);
 
     ev.exit();
+
+    wrapped
 }

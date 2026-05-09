@@ -9,7 +9,7 @@ use crate::{
     ui_state::{GreenScreen, TitleBarDisplay, UiState, VideoAspect, WindowBehaviour},
 };
 use std::{
-    sync::mpsc::{RecvError, SendError, Sender},
+    sync::mpsc::SendError,
     time::{Duration, SystemTime},
 };
 use tokio::runtime::Runtime;
@@ -161,6 +161,8 @@ impl AdditionalRenderingState {
         active_ui_flags
     }
 
+    /// Even when reporting Ok(()), it can seem like it failed if it immediately closes again
+
     pub fn open_settings_ui(&self) -> Result<(), OpenSettingsErr> {
         let before = self.settings_state.clone();
 
@@ -168,6 +170,8 @@ impl AdditionalRenderingState {
             return Err(OpenSettingsErr::FailedToUpdateState(e));
         }
 
+        // This is just suggestive. It doesn't hold the lock. It can shutdown before
+        // the shutdown call is made or start before the start is called.
         let is_active = { *SETTINGS_IS_RUNNING.lock().unwrap() };
 
         if is_active {
@@ -179,25 +183,20 @@ impl AdditionalRenderingState {
             }
         }
 
-        let (s, r) = std::sync::mpsc::channel::<_>();
-
-        let res = self.channels.start_settings_ui.send(s);
+        let res = self.channels.start_settings_ui.send(());
 
         if let Err(e) = res {
             return Err(OpenSettingsErr::FailedToSendStartSignal(e));
         }
 
-        let res = r.recv();
-
-        if let Err(e) = res {
-            return Err(OpenSettingsErr::FailedToReceiveOpenConfirmation(e));
-        }
-
         Ok(())
     }
 
+    /// Even when reporting Ok(()), it can seem like it failed if it immediately opens again.
     pub fn shutdown_settings_ui(&self) -> Result<(), ShutdownSettingsErr> {
-        let is_active = *SETTINGS_IS_RUNNING.lock().unwrap();
+        // This is just suggestive. It doesn't hold the lock. It can shutdown before
+        // the shutdown call is made or start before the start is called.
+        let is_active = { *SETTINGS_IS_RUNNING.lock().unwrap() };
 
         if is_active {
             let before = self.settings_state.clone();
@@ -208,18 +207,10 @@ impl AdditionalRenderingState {
                 return Err(ShutdownSettingsErr::SendStateErr(e));
             }
 
-            let (s, r) = std::sync::mpsc::channel::<_>();
-
-            let res = self.channels.kill_with_confirm.send(s);
+            let res = self.channels.kill_gtk.send(());
 
             if let Err(e) = res {
                 return Err(ShutdownSettingsErr::SendKillErr(e));
-            }
-
-            let res = r.recv();
-
-            if let Err(e) = res {
-                return Err(ShutdownSettingsErr::ConfirmShutdownErr(e));
             }
         }
 
@@ -231,13 +222,11 @@ impl AdditionalRenderingState {
 pub enum OpenSettingsErr {
     FailedToUpdateState(SendError<UiState>),
     ThreadPredictedTerminated(ShutdownSettingsErr),
-    FailedToSendStartSignal(SendError<Sender<()>>),
-    FailedToReceiveOpenConfirmation(RecvError),
+    FailedToSendStartSignal(SendError<()>),
 }
 
 #[derive(Debug)]
 pub enum ShutdownSettingsErr {
     SendStateErr(SendError<UiState>),
-    SendKillErr(SendError<Sender<()>>),
-    ConfirmShutdownErr(RecvError),
+    SendKillErr(SendError<()>),
 }

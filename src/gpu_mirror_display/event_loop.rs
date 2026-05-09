@@ -675,13 +675,13 @@ impl ApplicationHandler<()> for State3 {
                 on_redraw(&mut state, &mut additional_state);
 
                 if state.should_shutdown {
-                    shutdown::shutdown(event_loop, &state, &additional_state);
+                    let _ = shutdown::shutdown(event_loop, &state, &additional_state);
 
                     return;
                 }
             }
             WindowEvent::CloseRequested => {
-                shutdown::shutdown(event_loop, &state, &additional_state);
+                let _ = shutdown::shutdown(event_loop, &state, &additional_state);
 
                 return;
             }
