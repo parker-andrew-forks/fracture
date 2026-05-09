@@ -92,7 +92,7 @@ pub fn write_ui_texture_and_handle_ui_actions(
                 &img_position,
                 &binary_images::ICON_GEAR_NO_FILL,
             ) {
-                additional.open_settings_ui();
+                let _ = additional.open_settings_ui();
             }
         }
 

@@ -8,7 +8,10 @@ use crate::{
     stream_creation::utility_gnome_video_frame::PredictedWgpuFrameFormat,
     ui_state::{GreenScreen, TitleBarDisplay, UiState, VideoAspect, WindowBehaviour},
 };
-use std::time::{Duration, SystemTime};
+use std::{
+    sync::mpsc::{RecvError, SendError, Sender},
+    time::{Duration, SystemTime},
+};
 use tokio::runtime::Runtime;
 use wgpu::PipelineLayout;
 use winit::{dpi::PhysicalSize, window::Window};
@@ -158,43 +161,83 @@ impl AdditionalRenderingState {
         active_ui_flags
     }
 
-    pub fn open_settings_ui(&self) {
+    pub fn open_settings_ui(&self) -> Result<(), OpenSettingsErr> {
         let before = self.settings_state.clone();
 
-        self.channels
-            .gpu_sender_request
-            .send(before)
-            .expect("Settings thread stays");
+        if let Err(e) = self.channels.gpu_sender_request.send(before) {
+            return Err(OpenSettingsErr::FailedToUpdateState(e));
+        }
 
         let is_active = { *SETTINGS_IS_RUNNING.lock().unwrap() };
 
         if is_active {
-            self.shutdown_settings_ui();
+            match self.shutdown_settings_ui() {
+                Err(e) => {
+                    return Err(OpenSettingsErr::ThreadPredictedTerminated(e));
+                }
+                _ => {}
+            }
         }
 
         let (s, r) = std::sync::mpsc::channel::<_>();
 
-        let _ = self.channels.start_settings_ui.send(s);
+        let res = self.channels.start_settings_ui.send(s);
 
-        let _ = r.recv();
+        if let Err(e) = res {
+            return Err(OpenSettingsErr::FailedToSendStartSignal(e));
+        }
+
+        let res = r.recv();
+
+        if let Err(e) = res {
+            return Err(OpenSettingsErr::FailedToReceiveOpenConfirmation(e));
+        }
+
+        Ok(())
     }
 
-    pub fn shutdown_settings_ui(&self) {
+    pub fn shutdown_settings_ui(&self) -> Result<(), ShutdownSettingsErr> {
         let is_active = *SETTINGS_IS_RUNNING.lock().unwrap();
 
         if is_active {
             let before = self.settings_state.clone();
 
-            self.channels
-                .gpu_sender_request
-                .send(before)
-                .expect("Settings thread stays");
+            let res = self.channels.gpu_sender_request.send(before);
+
+            if let Err(e) = res {
+                return Err(ShutdownSettingsErr::SendStateErr(e));
+            }
 
             let (s, r) = std::sync::mpsc::channel::<_>();
 
-            let _ = self.channels.kill_with_confirm.send(s);
+            let res = self.channels.kill_with_confirm.send(s);
 
-            let _ = r.recv();
+            if let Err(e) = res {
+                return Err(ShutdownSettingsErr::SendKillErr(e));
+            }
+
+            let res = r.recv();
+
+            if let Err(e) = res {
+                return Err(ShutdownSettingsErr::ConfirmShutdownErr(e));
+            }
         }
+
+        Ok(())
     }
+}
+
+#[derive(Debug)]
+pub enum OpenSettingsErr {
+    FailedToUpdateState(SendError<UiState>),
+    ThreadPredictedTerminated(ShutdownSettingsErr),
+    FailedToSendStartSignal(SendError<Sender<()>>),
+    FailedToReceiveOpenConfirmation(RecvError),
+}
+
+#[derive(Debug)]
+pub enum ShutdownSettingsErr {
+    SendStateErr(SendError<UiState>),
+    SendKillErr(SendError<Sender<()>>),
+    ConfirmShutdownErr(RecvError),
 }
