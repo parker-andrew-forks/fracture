@@ -43,6 +43,12 @@ pub fn send_notifcation(title: &str, msg: &str) -> ashpd::Result<()> {
     tokio.block_on(async { send_ash_notifcation(&title, &msg).await })
 }
 
+#[derive(Debug)]
+pub struct JoinedAtEnd {
+    pipewire: bool,
+    gtk: bool,
+}
+
 fn main() {
     // This is a hack until I fix it... For my device, the GDK_BACKEND is set to x11 and I don't know why...
     //
@@ -121,10 +127,18 @@ fn main() {
 
     run_mirror_video_output_ui(gpu).expect("The window should always successfully run.");
 
+    let mut temp = JoinedAtEnd {
+        pipewire: true,
+        gtk: true,
+    };
+
     if !*PIPEWIRE_SHUTDOWN_AT_END.lock().unwrap() {
         match window_recording_handle.is_finished() {
-            true => println!("pw result: {:#?}", window_recording_handle.join().unwrap()),
-            false => println!("the pw thread is being dropped without finishing."),
+            true => println!("pw result: {:#?}", window_recording_handle.join()),
+            false => {
+                temp.pipewire = false;
+                println!("the pw thread is being dropped without finishing.")
+            }
         }
     } else {
         window_recording_handle.join().unwrap();
@@ -135,6 +149,7 @@ fn main() {
         match gtk_user_interfaces_handle.is_finished() {
             true => println!("gtk result: {:#?}", gtk_user_interfaces_handle.join()),
             false => {
+                temp.gtk = false;
                 println!("the gtk thread is being dropped without finishing.");
             }
         }
@@ -142,5 +157,22 @@ fn main() {
         gtk_user_interfaces_handle.join().unwrap();
     }
 
-    println!("Successful shutdown.")
+    let temp2;
+
+    if !temp.gtk || !temp.pipewire {
+        temp2 = Err(temp);
+    } else {
+        temp2 = Ok(temp);
+    }
+
+    match &temp2 {
+        Ok(_) => {
+            println!("Successful shutdown.")
+        }
+        Err(_) => {
+            println!("{:#?}", temp2);
+
+            std::process::exit(0);
+        }
+    }
 }
