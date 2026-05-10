@@ -48,8 +48,8 @@ pub fn shutdown(
             count += 1;
 
             // The termination check is completed when starting
-            let r1 = additional.open_settings_ui();
-            let r2 = additional.shutdown_settings_ui();
+            let r1 = additional.send_open_signal();
+            let r2 = additional.send_shutdown_signal();
 
             // There's a case where the termination signal kills the thread before the channels are used. There
             // was an expect in the open and closing, so now I'm checking the errors reported to make sure

@@ -162,8 +162,7 @@ impl AdditionalRenderingState {
     }
 
     /// Even when reporting Ok(()), it can seem like it failed if it immediately closes again
-
-    pub fn open_settings_ui(&self) -> Result<(), OpenSettingsErr> {
+    pub fn send_open_signal(&self) -> Result<(), OpenSettingsErr> {
         let before = self.settings_state.clone();
 
         if let Err(e) = self.channels.gpu_sender_request.send(before) {
@@ -175,7 +174,7 @@ impl AdditionalRenderingState {
         let is_active = { *SETTINGS_IS_RUNNING.lock().unwrap() };
 
         if is_active {
-            match self.shutdown_settings_ui() {
+            match self.send_shutdown_signal() {
                 Err(e) => {
                     return Err(OpenSettingsErr::ThreadPredictedTerminated(e));
                 }
@@ -193,25 +192,19 @@ impl AdditionalRenderingState {
     }
 
     /// Even when reporting Ok(()), it can seem like it failed if it immediately opens again.
-    pub fn shutdown_settings_ui(&self) -> Result<(), ShutdownSettingsErr> {
-        // This is just suggestive. It doesn't hold the lock. It can shutdown before
-        // the shutdown call is made or start before the start is called.
-        let is_active = { *SETTINGS_IS_RUNNING.lock().unwrap() };
+    pub fn send_shutdown_signal(&self) -> Result<(), ShutdownSettingsErr> {
+        let before = self.settings_state.clone();
 
-        if is_active {
-            let before = self.settings_state.clone();
+        let res = self.channels.gpu_sender_request.send(before);
 
-            let res = self.channels.gpu_sender_request.send(before);
+        if let Err(e) = res {
+            return Err(ShutdownSettingsErr::SendStateErr(e));
+        }
 
-            if let Err(e) = res {
-                return Err(ShutdownSettingsErr::SendStateErr(e));
-            }
+        let res = self.channels.kill_gtk.send(());
 
-            let res = self.channels.kill_gtk.send(());
-
-            if let Err(e) = res {
-                return Err(ShutdownSettingsErr::SendKillErr(e));
-            }
+        if let Err(e) = res {
+            return Err(ShutdownSettingsErr::SendKillErr(e));
         }
 
         Ok(())

@@ -134,7 +134,9 @@ fn main() {
     if !*GTK_SHUTDOWN_AT_END.lock().unwrap() {
         match gtk_user_interfaces_handle.is_finished() {
             true => println!("gtk result: {:#?}", gtk_user_interfaces_handle.join()),
-            false => println!("the gtk thread is being dropped without finishing."),
+            false => {
+                println!("the gtk thread is being dropped without finishing.");
+            }
         }
     } else {
         gtk_user_interfaces_handle.join().unwrap();

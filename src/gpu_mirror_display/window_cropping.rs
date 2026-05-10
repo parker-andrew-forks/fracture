@@ -42,7 +42,7 @@ pub fn start_crop_selection(additional_state: &mut AdditionalRenderingState, sta
         .send(additional_state.settings_state.clone())
         .unwrap();
 
-    let _ = additional_state.shutdown_settings_ui();
+    let _ = additional_state.send_shutdown_signal();
 
     additional_state.cropped = Some(CroppedArea {
         relative_to_window_position: InitialAbsoluteWindowPosition { x: 0, y: 0 },
