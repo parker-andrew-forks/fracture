@@ -1,4 +1,4 @@
-use crate::global_application_state::SAFE_MODE;
+use crate::global_application_state::{GTK_SHUTDOWN_AT_END, PIPEWIRE_SHUTDOWN_AT_END, SAFE_MODE};
 use crate::gpu_mirror_display::defaults::FP_ID;
 use application_channel_creator::ApplicationChannelsCreator;
 use ashpd::desktop::notification::{NotificationProxy, Priority};
@@ -121,8 +121,24 @@ fn main() {
 
     run_mirror_video_output_ui(gpu).expect("The window should always successfully run.");
 
-    window_recording_handle.join().unwrap();
-    gtk_user_interfaces_handle.join().unwrap();
+    if !*PIPEWIRE_SHUTDOWN_AT_END.lock().unwrap() {
+        match window_recording_handle.is_finished() {
+            true => println!("pw result: {:#?}", window_recording_handle.join().unwrap()),
+            false => println!("the pw thread is being dropped without finishing."),
+        }
+    } else {
+        window_recording_handle.join().unwrap();
+    }
+
+    // if this is true, and we made it to here, it either panicked or it failed to shutdown within a time limit.
+    if !*GTK_SHUTDOWN_AT_END.lock().unwrap() {
+        match gtk_user_interfaces_handle.is_finished() {
+            true => println!("gtk result: {:#?}", gtk_user_interfaces_handle.join()),
+            false => println!("the gtk thread is being dropped without finishing."),
+        }
+    } else {
+        gtk_user_interfaces_handle.join().unwrap();
+    }
 
     println!("Successful shutdown.")
 }

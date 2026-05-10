@@ -2,6 +2,8 @@ use std::time::Duration;
 
 use winit::event_loop::ActiveEventLoop;
 
+use crate::global_application_state::{GTK_SHUTDOWN_AT_END, PIPEWIRE_SHUTDOWN_AT_END};
+
 use super::state::{AdditionalRenderingState, State};
 
 pub fn start_shutdown(s: &mut State) {
@@ -24,7 +26,7 @@ pub enum SettingsGtkShutdownErr {
 #[derive(Debug)]
 pub enum PipewireShutdownErr {
     ThreadAlreadyTerminated,
-    ThreadTerminatedAfterSendingSignalToEnd(std::sync::mpsc::RecvError),
+    TimeoutOrTermination(std::sync::mpsc::RecvTimeoutError),
 }
 
 pub fn shutdown(
@@ -66,13 +68,16 @@ pub fn shutdown(
                 .recv_timeout(Duration::from_millis(100))
             {
                 Ok(_) => {
+                    *GTK_SHUTDOWN_AT_END.lock().unwrap() = true;
                     gtk = Ok(());
                     break 'bad_logic_loop;
                 }
                 Err(e) => match e {
                     std::sync::mpsc::RecvTimeoutError::Timeout => {
-                        if count > 30 {
+                        // 10 seconds
+                        if count > 100 {
                             gtk = Err(SettingsGtkShutdownErr::FailedWithinTimeLimit);
+
                             break 'bad_logic_loop;
                         }
                     }
@@ -89,20 +94,24 @@ pub fn shutdown(
         gtk = Err(SettingsGtkShutdownErr::ThreadAlreadyTerminated);
     }
 
-    // println!("Result of stopping the settings ui: {:#?}", gtk);
-
     let pw;
 
     if pw_1.is_ok() {
-        match additional.channels.dbus_shutdown_conf.recv() {
-            Ok(_) => pw = Ok(()),
-            Err(e) => pw = Err(PipewireShutdownErr::ThreadTerminatedAfterSendingSignalToEnd(e)),
+        match additional
+            .channels
+            .dbus_shutdown_conf
+            .recv_timeout(Duration::from_secs(3))
+        {
+            Ok(_) => {
+                *PIPEWIRE_SHUTDOWN_AT_END.lock().unwrap() = true;
+
+                pw = Ok(())
+            }
+            Err(e) => pw = Err(PipewireShutdownErr::TimeoutOrTermination(e)),
         }
     } else {
         pw = Err(PipewireShutdownErr::ThreadAlreadyTerminated);
     }
-
-    // println!("Pipewire is predicted as shutdown: {:#?}", pw);
 
     let full = ShutdownResult {
         gtk_settings_ui: gtk,

@@ -12,6 +12,9 @@ pub const SAFE_MODE: &'static str = "SAFE_MODE";
 
 pub const VERSION: &'static str = "0.0.3";
 
+pub static GTK_SHUTDOWN_AT_END: Mutex<bool> = Mutex::new(false);
+pub static PIPEWIRE_SHUTDOWN_AT_END: Mutex<bool> = Mutex::new(false);
+
 pub static FOUND_VERSION: LazyLock<String> = LazyLock::new(|| {
     if let Ok(v) = reqwest::blocking::get("https://fracture.systems/fracture/VERSION") {
         if let Ok(v) = v.text() {
