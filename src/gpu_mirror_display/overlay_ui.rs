@@ -92,7 +92,7 @@ pub fn write_ui_texture_and_handle_ui_actions(
                 &img_position,
                 &binary_images::ICON_GEAR_NO_FILL,
             ) {
-                let _ = additional.send_open_signal();
+                let _ = additional.gtk_open_signal();
             }
         }
 

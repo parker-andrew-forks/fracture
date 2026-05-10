@@ -162,7 +162,7 @@ impl AdditionalRenderingState {
     }
 
     /// Even when reporting Ok(()), it can seem like it failed if it immediately closes again
-    pub fn send_open_signal(&self) -> Result<(), OpenSettingsErr> {
+    pub fn gtk_open_signal(&self) -> Result<(), OpenSettingsErr> {
         let before = self.settings_state.clone();
 
         if let Err(e) = self.channels.gpu_sender_request.send(before) {
@@ -174,7 +174,7 @@ impl AdditionalRenderingState {
         let is_active = { *SETTINGS_IS_RUNNING.lock().unwrap() };
 
         if is_active {
-            match self.send_shutdown_signal() {
+            match self.gtk_shutdown_signal() {
                 Err(e) => {
                     return Err(OpenSettingsErr::ThreadPredictedTerminated(e));
                 }
@@ -191,8 +191,18 @@ impl AdditionalRenderingState {
         Ok(())
     }
 
+    pub fn gtk_shutdown_signal_checked(&self) -> Result<(), ShutdownSettingsErr> {
+        let is_active = { *SETTINGS_IS_RUNNING.lock().unwrap() };
+
+        if is_active {
+            self.gtk_shutdown_signal()
+        } else {
+            Ok(())
+        }
+    }
+
     /// Even when reporting Ok(()), it can seem like it failed if it immediately opens again.
-    pub fn send_shutdown_signal(&self) -> Result<(), ShutdownSettingsErr> {
+    pub fn gtk_shutdown_signal(&self) -> Result<(), ShutdownSettingsErr> {
         let before = self.settings_state.clone();
 
         let res = self.channels.gpu_sender_request.send(before);
