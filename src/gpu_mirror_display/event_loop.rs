@@ -51,6 +51,7 @@ struct State3 {
     add: Option<AdditionalRenderingState>,
     channels: Arc<GpuChannelSide>,
     counter: i32,
+    about_to_wait_count: u32,
 }
 
 impl ApplicationHandler<()> for State3 {
@@ -761,7 +762,20 @@ impl ApplicationHandler<()> for State3 {
                     println!("shutting down");
                     return;
                 } else {
-                    println!("idk what is happening ");
+                    self.about_to_wait_count += 1;
+
+                    if self.about_to_wait_count > 100 {
+                        println!(
+                            "shutting down because the wait count was too high without a window"
+                        );
+                        let res = shutdown::shutdown(
+                            &ev,
+                            self.state.as_ref().unwrap(),
+                            self.add.as_ref().unwrap(),
+                        );
+
+                        println!("{:#?}", res);
+                    }
                 }
             }
         }
@@ -778,6 +792,7 @@ pub fn run_mirror_video_output_ui(channels: GpuChannelSide) -> Result<(), EventL
         counter: 0,
         state: None,
         add: None,
+        about_to_wait_count: 0,
     };
 
     event_loop.run_app(&mut state3)
