@@ -99,6 +99,8 @@ impl State {
     }
 }
 
+pub const COMPLETE_RESIZE_ON_NEW_SETTINGS_AFTER: i32 = 60;
+
 pub struct AdditionalRenderingState {
     pub mouse_clicks: Vec<((u32, u32), SystemTime)>,
     pub mouse_downs: Vec<((u32, u32), SystemTime)>,
@@ -116,6 +118,9 @@ pub struct AdditionalRenderingState {
     pub channels: std::sync::Arc<GpuChannelSide>,
     pub mouse_resize_state: ResizeInteractionsState,
     pub keep_borders: bool,
+
+    pub resize_countdown_from_new_settings: i32,
+    pub resize_countdown_started: bool,
 }
 
 impl AdditionalRenderingState {
