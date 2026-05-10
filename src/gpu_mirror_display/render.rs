@@ -374,31 +374,39 @@ impl State {
                 label: Some("Render Encoder2"),
             });
 
-        {
-            let mut render_pass = ui_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Render Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &pixel_perfect_inner_window_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
+        // with this 1 if statement, we remove a call to every pixel from the cropped region to
+        // draw the user interface. The UI is only ever active when the mouse is over the screen.
+        //
+        // it's a good optimization because it's expected there will be lots of different versions running wasting
+        // lots of resources drawing user interfaces that don't exist.
+        if additional_state.should_render_ui() {
+            {
+                let mut render_pass = ui_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Render Pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &pixel_perfect_inner_window_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                        depth_slice: None,
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
 
-            render_pass.set_pipeline(&self.ui_rendering_pipeline);
-            render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
+                render_pass.set_pipeline(&self.ui_rendering_pipeline);
+                render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
 
-            render_pass.set_vertex_buffer(0, self.vertex_buffer2.slice(..));
-            render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+                render_pass.set_vertex_buffer(0, self.vertex_buffer2.slice(..));
+                render_pass
+                    .set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
 
-            render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
+                render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
+            }
         }
 
         let after_queue = {

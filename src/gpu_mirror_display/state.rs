@@ -124,6 +124,14 @@ pub struct AdditionalRenderingState {
 }
 
 impl AdditionalRenderingState {
+    pub fn should_render_ui(&self) -> bool {
+        if self.mouse_over_screen || self.mouse_resize_state != ResizeInteractionsState::None {
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn get_active_ui_flags(&self) -> Vec<UiFlag> {
         let mut active_ui_flags = vec![];
 

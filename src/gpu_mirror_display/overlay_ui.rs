@@ -46,212 +46,218 @@ pub fn write_ui_texture_and_handle_ui_actions(
 
     let mut found_hover = false;
 
-    if *&additional.crop_button_pressed {
-        /*         let x: i32 = (width as i32 / 2)
-            - (binary_images::ICON_SELECT_SCREEN_AREA.dimensions.width / 2) as i32;
-        let y: i32 = (height as i32 / 2)
-            - (binary_images::ICON_SELECT_SCREEN_AREA.dimensions.height / 2) as i32;
+    // The user interface is only displayed when the mouse is over the screen.
+    if additional.should_render_ui() {
+        if *&additional.crop_button_pressed {
+            /*           let x: i32 = (width as i32 / 2)
+                - (binary_images::ICON_SELECT_SCREEN_AREA.dimensions.width / 2) as i32;
+            let y: i32 = (height as i32 / 2)
+                - (binary_images::ICON_SELECT_SCREEN_AREA.dimensions.height / 2) as i32;
 
-        write_image_to_texture(
-            state,
-            &texture,
-            &binary_images::ICON_SELECT_SCREEN_AREA,
-            (x, y),
-        ); */
-    } else if *&additional.mouse_over_screen {
-        // settings button
-        {
-            let img_position = (
-                0 as i32 + ((0 as i32 + 10) * 1),
-                height as i32 - (binary_images::ICON_PIP_NO_FILL.dimensions.height as i32 + 5 * 1),
-            );
-
-            if mouse_in_img_bounds(
-                &mouse_position,
-                &img_position,
-                &binary_images::ICON_GEAR_NO_FILL,
-                &mut found_hover,
-            ) {
-                write_image_to_texture(
-                    state,
-                    &texture,
-                    &binary_images::ICON_GEAR_FILL,
-                    img_position,
+            write_image_to_texture(
+                state,
+                &texture,
+                &binary_images::ICON_SELECT_SCREEN_AREA,
+                (x, y),
+            ); */
+        } else if *&additional.mouse_over_screen {
+            // settings button
+            {
+                let img_position = (
+                    0 as i32 + ((0 as i32 + 10) * 1),
+                    height as i32
+                        - (binary_images::ICON_PIP_NO_FILL.dimensions.height as i32 + 5 * 1),
                 );
-            } else {
-                write_image_to_texture(
-                    state,
-                    &texture,
+
+                if mouse_in_img_bounds(
+                    &mouse_position,
+                    &img_position,
                     &binary_images::ICON_GEAR_NO_FILL,
-                    img_position,
-                );
+                    &mut found_hover,
+                ) {
+                    write_image_to_texture(
+                        state,
+                        &texture,
+                        &binary_images::ICON_GEAR_FILL,
+                        img_position,
+                    );
+                } else {
+                    write_image_to_texture(
+                        state,
+                        &texture,
+                        &binary_images::ICON_GEAR_NO_FILL,
+                        img_position,
+                    );
+                }
+
+                if found_remove_mouse_click(
+                    &mut additional.mouse_clicks,
+                    &img_position,
+                    &binary_images::ICON_GEAR_NO_FILL,
+                ) {
+                    let _ = additional.gtk_open_signal();
+                }
             }
 
-            if found_remove_mouse_click(
-                &mut additional.mouse_clicks,
-                &img_position,
-                &binary_images::ICON_GEAR_NO_FILL,
-            ) {
-                let _ = additional.gtk_open_signal();
-            }
-        }
-
-        // crop button
-        {
-            let img_position = (
-                0 as i32
-                    + ((10 + binary_images::ICON_PIP_NO_FILL.dimensions.height as i32 + 10) * 1),
-                height as i32 - (binary_images::ICON_PIP_NO_FILL.dimensions.height as i32 + 5 * 1),
-            );
-
-            if mouse_in_img_bounds(
-                &mouse_position,
-                &img_position,
-                &binary_images::ICON_PIP_NO_FILL,
-                &mut found_hover,
-            ) {
-                write_image_to_texture(
-                    state,
-                    &texture,
-                    &binary_images::ICON_PIP_FILL,
-                    img_position,
+            // crop button
+            {
+                let img_position = (
+                    0 as i32
+                        + ((10 + binary_images::ICON_PIP_NO_FILL.dimensions.height as i32 + 10)
+                            * 1),
+                    height as i32
+                        - (binary_images::ICON_PIP_NO_FILL.dimensions.height as i32 + 5 * 1),
                 );
-            } else {
-                write_image_to_texture(
-                    state,
-                    &texture,
+
+                if mouse_in_img_bounds(
+                    &mouse_position,
+                    &img_position,
                     &binary_images::ICON_PIP_NO_FILL,
-                    img_position,
-                );
-            }
+                    &mut found_hover,
+                ) {
+                    write_image_to_texture(
+                        state,
+                        &texture,
+                        &binary_images::ICON_PIP_FILL,
+                        img_position,
+                    );
+                } else {
+                    write_image_to_texture(
+                        state,
+                        &texture,
+                        &binary_images::ICON_PIP_NO_FILL,
+                        img_position,
+                    );
+                }
 
-            if found_remove_mouse_click(
-                &mut additional.mouse_clicks,
-                &img_position,
-                &binary_images::ICON_PIP_NO_FILL,
-            ) {
-                start_crop_selection(additional, state);
+                if found_remove_mouse_click(
+                    &mut additional.mouse_clicks,
+                    &img_position,
+                    &binary_images::ICON_PIP_NO_FILL,
+                ) {
+                    start_crop_selection(additional, state);
+                }
             }
         }
-    }
 
-    if *&additional.mouse_over_screen {
-        if let TitleBarDisplay::HiddenTitleBar = ui_settings.display_title {
-            // exit button
-            {
-                let img_position = (width as i32 - (35 * 1), 10);
+        if *&additional.mouse_over_screen {
+            if let TitleBarDisplay::HiddenTitleBar = ui_settings.display_title {
+                // exit button
+                {
+                    let img_position = (width as i32 - (35 * 1), 10);
 
-                if mouse_in_img_bounds(
-                    &mouse_position,
-                    &img_position,
-                    &binary_images::ICON_EXIT_NO_FILL,
-                    &mut found_hover,
-                ) {
-                    write_image_to_texture(
-                        state,
-                        &texture,
-                        &binary_images::ICON_EXIT_FILL,
-                        img_position,
-                    );
-                } else {
-                    write_image_to_texture(
-                        state,
-                        &texture,
+                    if mouse_in_img_bounds(
+                        &mouse_position,
+                        &img_position,
                         &binary_images::ICON_EXIT_NO_FILL,
-                        img_position,
-                    );
-                }
-
-                if found_remove_mouse_click(
-                    &mut additional.mouse_clicks,
-                    &img_position,
-                    &binary_images::ICON_EXIT_NO_FILL,
-                ) {
-                    shutdown::start_shutdown(state);
-                }
-            }
-
-            // maximize button
-            {
-                let img_position = (width as i32 - (35 * 2), 10);
-
-                if mouse_in_img_bounds(
-                    &mouse_position,
-                    &img_position,
-                    &binary_images::ICON_SQUARE_NO_FILL,
-                    &mut found_hover,
-                ) {
-                    write_image_to_texture(
-                        state,
-                        &texture,
-                        &binary_images::ICON_SQUARE_FILL,
-                        img_position,
-                    );
-                } else {
-                    write_image_to_texture(
-                        state,
-                        &texture,
-                        &binary_images::ICON_SQUARE_NO_FILL,
-                        img_position,
-                    );
-                }
-
-                if found_remove_mouse_click(
-                    &mut additional.mouse_clicks,
-                    &img_position,
-                    &binary_images::ICON_SQUARE_NO_FILL,
-                ) {
-                    if !state.window.is_maximized() {
-                        state.window.set_maximized(true);
+                        &mut found_hover,
+                    ) {
+                        write_image_to_texture(
+                            state,
+                            &texture,
+                            &binary_images::ICON_EXIT_FILL,
+                            img_position,
+                        );
                     } else {
-                        state.window.set_maximized(false);
+                        write_image_to_texture(
+                            state,
+                            &texture,
+                            &binary_images::ICON_EXIT_NO_FILL,
+                            img_position,
+                        );
+                    }
+
+                    if found_remove_mouse_click(
+                        &mut additional.mouse_clicks,
+                        &img_position,
+                        &binary_images::ICON_EXIT_NO_FILL,
+                    ) {
+                        shutdown::start_shutdown(state);
+                    }
+                }
+
+                // maximize button
+                {
+                    let img_position = (width as i32 - (35 * 2), 10);
+
+                    if mouse_in_img_bounds(
+                        &mouse_position,
+                        &img_position,
+                        &binary_images::ICON_SQUARE_NO_FILL,
+                        &mut found_hover,
+                    ) {
+                        write_image_to_texture(
+                            state,
+                            &texture,
+                            &binary_images::ICON_SQUARE_FILL,
+                            img_position,
+                        );
+                    } else {
+                        write_image_to_texture(
+                            state,
+                            &texture,
+                            &binary_images::ICON_SQUARE_NO_FILL,
+                            img_position,
+                        );
+                    }
+
+                    if found_remove_mouse_click(
+                        &mut additional.mouse_clicks,
+                        &img_position,
+                        &binary_images::ICON_SQUARE_NO_FILL,
+                    ) {
+                        if !state.window.is_maximized() {
+                            state.window.set_maximized(true);
+                        } else {
+                            state.window.set_maximized(false);
+                        }
+                    }
+                }
+
+                // minimize button
+                {
+                    let img_position = (width as i32 - (35 * 3), 10);
+
+                    if mouse_in_img_bounds(
+                        &mouse_position,
+                        &img_position,
+                        &binary_images::ICON_MINIMIZE_NO_FILL,
+                        &mut found_hover,
+                    ) {
+                        write_image_to_texture(
+                            state,
+                            &texture,
+                            &binary_images::ICON_MINIMIZE_FILL,
+                            img_position,
+                        );
+                    } else {
+                        write_image_to_texture(
+                            state,
+                            &texture,
+                            &binary_images::ICON_MINIMIZE_NO_FILL,
+                            img_position,
+                        );
+                    }
+
+                    if found_remove_mouse_click(
+                        &mut additional.mouse_clicks,
+                        &img_position,
+                        &binary_images::ICON_MINIMIZE_NO_FILL,
+                    ) {
+                        state.window.set_minimized(true);
                     }
                 }
             }
 
-            // minimize button
-            {
-                let img_position = (width as i32 - (35 * 3), 10);
-
-                if mouse_in_img_bounds(
-                    &mouse_position,
-                    &img_position,
-                    &binary_images::ICON_MINIMIZE_NO_FILL,
-                    &mut found_hover,
-                ) {
-                    write_image_to_texture(
-                        state,
-                        &texture,
-                        &binary_images::ICON_MINIMIZE_FILL,
-                        img_position,
-                    );
-                } else {
-                    write_image_to_texture(
-                        state,
-                        &texture,
-                        &binary_images::ICON_MINIMIZE_NO_FILL,
-                        img_position,
-                    );
-                }
-
-                if found_remove_mouse_click(
-                    &mut additional.mouse_clicks,
-                    &img_position,
-                    &binary_images::ICON_MINIMIZE_NO_FILL,
-                ) {
-                    state.window.set_minimized(true);
-                }
-            }
-        }
-
-        if !*&additional.crop_button_pressed {
-            if !found_hover {
-                if let Some(idx) = first_in_range(
-                    &mut additional.mouse_downs,
-                    &((0, 0), ((width as i32), (height as i32))),
-                ) {
-                    let _ = state.window.drag_window();
-                    additional.mouse_downs.remove(idx);
+            if !*&additional.crop_button_pressed {
+                if !found_hover {
+                    if let Some(idx) = first_in_range(
+                        &mut additional.mouse_downs,
+                        &((0, 0), ((width as i32), (height as i32))),
+                    ) {
+                        let _ = state.window.drag_window();
+                        additional.mouse_downs.remove(idx);
+                    }
                 }
             }
         }
