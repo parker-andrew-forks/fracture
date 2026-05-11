@@ -306,6 +306,20 @@ impl State {
         additional_state: &mut AdditionalRenderingState,
         dma_data: Option<WgpuTexture>,
     ) -> Result<(), wgpu::SurfaceError> {
+        let mut run_scan = false;
+
+        while let Ok(_) = additional_state
+            .channels
+            .gpu_frame_scan_requested
+            .try_recv()
+        {
+            run_scan = true;
+        }
+
+        if !self.dma_startup_checks.is_complete {
+            run_scan = true;
+        }
+
         self.wrapping_render_count = self.wrapping_render_count.wrapping_add(1);
         let settings = &additional_state.settings_state;
 
@@ -425,7 +439,11 @@ impl State {
                 let mut req_by_wgpu_dim = imported_dma.texture().size();
                 req_by_wgpu_dim.width = padded_to_align(req_by_wgpu_dim.width);
 
-                let cpu_copy_dma_buf_data = self.device.create_buffer(&dma_cpu_copy_descriptor);
+                let cpu_copy_dma_buf_data = if run_scan {
+                    Some(self.device.create_buffer(&dma_cpu_copy_descriptor))
+                } else {
+                    None
+                };
 
                 let padded_texture_buffer = self.device.create_texture(&wgpu::TextureDescriptor {
                     label: None,
@@ -570,25 +588,27 @@ impl State {
                     },
                 );
 
-                move_copy_etc_encoder.copy_texture_to_buffer(
-                    wgpu::TexelCopyTextureInfo {
-                        aspect: wgpu::TextureAspect::All,
-                        texture: &padded_texture_buffer,
-                        mip_level: 0,
-                        origin: wgpu::Origin3d::ZERO,
-                    },
-                    wgpu::TexelCopyBufferInfo {
-                        buffer: &cpu_copy_dma_buf_data,
-                        layout: wgpu::TexelCopyBufferLayout {
-                            offset: 0,
-                            bytes_per_row: Some(
-                                padded_texture_buffer.width() * (size_of::<u32>() as u32),
-                            ),
-                            rows_per_image: Some(padded_texture_buffer.height()),
+                if run_scan {
+                    move_copy_etc_encoder.copy_texture_to_buffer(
+                        wgpu::TexelCopyTextureInfo {
+                            aspect: wgpu::TextureAspect::All,
+                            texture: &padded_texture_buffer,
+                            mip_level: 0,
+                            origin: wgpu::Origin3d::ZERO,
                         },
-                    },
-                    padded_texture_buffer.size(),
-                );
+                        wgpu::TexelCopyBufferInfo {
+                            buffer: &cpu_copy_dma_buf_data.as_ref().unwrap(),
+                            layout: wgpu::TexelCopyBufferLayout {
+                                offset: 0,
+                                bytes_per_row: Some(
+                                    padded_texture_buffer.width() * (size_of::<u32>() as u32),
+                                ),
+                                rows_per_image: Some(padded_texture_buffer.height()),
+                            },
+                        },
+                        padded_texture_buffer.size(),
+                    );
+                }
 
                 let mut imported_dim = imported_dma.texture().size();
                 imported_dim.width = padded_to_align(imported_dim.width);
@@ -598,23 +618,8 @@ impl State {
                 let after_queue = move |state| {
                     let state: &mut Self = state;
 
-                    // if !state.first_dma_sent || state.wrapping_render_count % 600 == 0 {
-                    let mut run_scan = false;
-
-                    while let Ok(_) = additional_state
-                        .channels
-                        .gpu_frame_scan_requested
-                        .try_recv()
-                    {
-                        run_scan = true;
-                    }
-
-                    if !state.dma_startup_checks.is_complete {
-                        run_scan = true;
-                    }
-
                     if run_scan {
-                        let output_buffer = cpu_copy_dma_buf_data;
+                        let output_buffer = cpu_copy_dma_buf_data.unwrap();
                         let cpu_data_buffer_slice = output_buffer.slice(..);
 
                         let rt = state.rt.as_ref().unwrap();
