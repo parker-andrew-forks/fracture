@@ -439,50 +439,6 @@ impl State {
                 let mut req_by_wgpu_dim = imported_dma.texture().size();
                 req_by_wgpu_dim.width = padded_to_align(req_by_wgpu_dim.width);
 
-                let cpu_copy_dma_buf_data = if run_scan {
-                    Some(self.device.create_buffer(&dma_cpu_copy_descriptor))
-                } else {
-                    None
-                };
-
-                // The padded buffer is only needed to copy to a cpu buffer.
-                let padded_texture_buffer = if run_scan {
-                    Some(self.device.create_texture(&wgpu::TextureDescriptor {
-                        label: None,
-                        size: req_by_wgpu_dim,
-                        mip_level_count: imported_dma.texture().mip_level_count(),
-                        sample_count: imported_dma.texture().sample_count(),
-                        dimension: imported_dma.texture().dimension(),
-                        format: imported_dma.texture().format(),
-                        usage: TextureUsages::COPY_DST | TextureUsages::COPY_SRC,
-                        view_formats: &vec![imported_dma.texture().format()],
-                    }))
-                } else {
-                    None
-                };
-
-                if run_scan {
-                    move_copy_etc_encoder.copy_texture_to_texture(
-                        wgpu::TexelCopyTextureInfo {
-                            aspect: wgpu::TextureAspect::All,
-                            texture: &imported_dma.texture(),
-                            mip_level: 0,
-                            origin: wgpu::Origin3d::ZERO,
-                        },
-                        wgpu::TexelCopyTextureInfo {
-                            aspect: wgpu::TextureAspect::All,
-                            texture: &padded_texture_buffer.as_ref().unwrap(),
-                            mip_level: 0,
-                            origin: wgpu::Origin3d::ZERO,
-                        },
-                        Extent3d {
-                            width: imported_dma.texture().width(),
-                            height: imported_dma.texture().height(),
-                            ..Default::default()
-                        },
-                    );
-                }
-
                 let crop = if let Some(v) = &additional_state.cropped {
                     v.clone()
                 } else {
@@ -595,30 +551,68 @@ impl State {
                     },
                 );
 
-                if run_scan {
-                    move_copy_etc_encoder.copy_texture_to_buffer(
-                        wgpu::TexelCopyTextureInfo {
-                            aspect: wgpu::TextureAspect::All,
-                            texture: &padded_texture_buffer.as_ref().unwrap(),
-                            mip_level: 0,
-                            origin: wgpu::Origin3d::ZERO,
-                        },
-                        wgpu::TexelCopyBufferInfo {
-                            buffer: &cpu_copy_dma_buf_data.as_ref().unwrap(),
-                            layout: wgpu::TexelCopyBufferLayout {
-                                offset: 0,
-                                bytes_per_row: Some(
-                                    padded_texture_buffer.as_ref().unwrap().width()
-                                        * (size_of::<u32>() as u32),
-                                ),
-                                rows_per_image: Some(
-                                    padded_texture_buffer.as_ref().unwrap().height(),
-                                ),
+                let cpu_copy_dma_buf_data: Option<wgpu::Buffer> = match run_scan {
+                    true => {
+                        let cpu_copy_dma_buf_data =
+                            self.device.create_buffer(&dma_cpu_copy_descriptor);
+
+                        // The padded buffer is only needed to copy to a cpu buffer.
+                        let padded_texture_buffer =
+                            self.device.create_texture(&wgpu::TextureDescriptor {
+                                label: None,
+                                size: req_by_wgpu_dim,
+                                mip_level_count: imported_dma.texture().mip_level_count(),
+                                sample_count: imported_dma.texture().sample_count(),
+                                dimension: imported_dma.texture().dimension(),
+                                format: imported_dma.texture().format(),
+                                usage: TextureUsages::COPY_DST | TextureUsages::COPY_SRC,
+                                view_formats: &vec![imported_dma.texture().format()],
+                            });
+
+                        move_copy_etc_encoder.copy_texture_to_texture(
+                            wgpu::TexelCopyTextureInfo {
+                                aspect: wgpu::TextureAspect::All,
+                                texture: &imported_dma.texture(),
+                                mip_level: 0,
+                                origin: wgpu::Origin3d::ZERO,
                             },
-                        },
-                        padded_texture_buffer.as_ref().unwrap().size(),
-                    );
-                }
+                            wgpu::TexelCopyTextureInfo {
+                                aspect: wgpu::TextureAspect::All,
+                                texture: &padded_texture_buffer,
+                                mip_level: 0,
+                                origin: wgpu::Origin3d::ZERO,
+                            },
+                            Extent3d {
+                                width: imported_dma.texture().width(),
+                                height: imported_dma.texture().height(),
+                                ..Default::default()
+                            },
+                        );
+
+                        move_copy_etc_encoder.copy_texture_to_buffer(
+                            wgpu::TexelCopyTextureInfo {
+                                aspect: wgpu::TextureAspect::All,
+                                texture: &padded_texture_buffer,
+                                mip_level: 0,
+                                origin: wgpu::Origin3d::ZERO,
+                            },
+                            wgpu::TexelCopyBufferInfo {
+                                buffer: &cpu_copy_dma_buf_data,
+                                layout: wgpu::TexelCopyBufferLayout {
+                                    offset: 0,
+                                    bytes_per_row: Some(
+                                        padded_texture_buffer.width() * (size_of::<u32>() as u32),
+                                    ),
+                                    rows_per_image: Some(padded_texture_buffer.height()),
+                                },
+                            },
+                            padded_texture_buffer.size(),
+                        );
+
+                        Some(cpu_copy_dma_buf_data)
+                    }
+                    false => None,
+                };
 
                 let mut imported_dim = imported_dma.texture().size();
                 imported_dim.width = padded_to_align(imported_dim.width);
@@ -628,8 +622,8 @@ impl State {
                 let after_queue = move |state| {
                     let state: &mut Self = state;
 
-                    if run_scan {
-                        let output_buffer = cpu_copy_dma_buf_data.unwrap();
+                    if let Some(cpu_copy_dma_buf_data) = cpu_copy_dma_buf_data {
+                        let output_buffer = cpu_copy_dma_buf_data;
                         let cpu_data_buffer_slice = output_buffer.slice(..);
 
                         let rt = state.rt.as_ref().unwrap();
