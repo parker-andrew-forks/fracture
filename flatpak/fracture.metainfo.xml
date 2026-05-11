@@ -38,6 +38,11 @@
     </p>
   </description>
   <releases>
+    <release type="stable" version="0.0.4" date="2026-05-11T00:00:00Z">
+      <description>
+        <p>optimizations and correcting errors</p>
+      </description>
+    </release>
     <release type="stable" version="0.0.3" date="2026-05-8T00:00:00Z">
       <description>
         <p>design changes, improved device support, and increased stability</p>
