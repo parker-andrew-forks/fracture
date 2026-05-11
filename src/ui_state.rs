@@ -264,7 +264,7 @@ impl Default for UiState {
             background: WindowBackground::Transparent,
             magnify_filter: DEFAULT_MAGNIFY_FILTER,
             minify_filter: DEFAULT_MINIFY_FILTER,
-            should_define_new_primary_sampler: false,
+            should_define_new_primary_sampler: true,
             window_interactions: WindowInteractions::Interactable,
         }
     }

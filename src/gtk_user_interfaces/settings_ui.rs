@@ -73,9 +73,7 @@ pub fn run_settings_app(channel: &Rc<RefCell<UiChannelSide>>, state: Rc<RefCell<
             glib::timeout_add_local(std::time::Duration::from_millis(200), move || {
                 let mut should_kill = false;
 
-                while let Ok(value) = app_channels2.borrow_mut().kill_with_confirm_recv.try_recv() {
-                    let _ = value.send(());
-
+                while let Ok(_) = app_channels2.borrow_mut().kill_with_confirm_recv.try_recv() {
                     *glib_loop_is_done.borrow_mut() = true;
                     should_kill = true;
                 }
@@ -190,14 +188,9 @@ pub fn run_settings_ui(mut ui: UiChannelSide) {
 
         {
             *SETTINGS_IS_RUNNING.lock().unwrap() = true;
-        }
+        };
 
-        let starter = starter.unwrap();
-        let _ = starter.send(());
-
-        while let Ok(starter) = ui.start_signal_receiver.try_recv() {
-            let _ = starter.send(());
-        }
+        while let Ok(_) = ui.start_signal_receiver.try_recv() {}
 
         if let Ok(_) = ui.stop_settings_ui.try_recv() {
             println!("Killing the Settings UI.");

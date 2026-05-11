@@ -12,7 +12,9 @@ use crate::gpu_mirror_display::postprocessing_shaders::{
     define_postprocessing_mirror_shader, if_shader_compilation_requested,
 };
 use crate::gpu_mirror_display::render::on_redraw;
-use crate::gpu_mirror_display::state::{AdditionalRenderingState, DmaStartupChecks, State};
+use crate::gpu_mirror_display::state::{
+    AdditionalRenderingState, COMPLETE_RESIZE_ON_NEW_SETTINGS_AFTER, DmaStartupChecks, State,
+};
 use crate::gpu_mirror_display::utility_vertex::{VERTICES, Vertex};
 use crate::gpu_mirror_display::{binary_images, shutdown};
 use crate::ui_state::{
@@ -51,6 +53,7 @@ struct State3 {
     add: Option<AdditionalRenderingState>,
     channels: Arc<GpuChannelSide>,
     counter: i32,
+    about_to_wait_count: u32,
 }
 
 impl ApplicationHandler<()> for State3 {
@@ -618,6 +621,8 @@ impl ApplicationHandler<()> for State3 {
             channels: self.channels.clone(),
             mouse_resize_state: ResizeInteractionsState::None,
             keep_borders: false,
+            resize_countdown_from_new_settings: 0,
+            resize_countdown_started: true,
         };
 
         additional_state
@@ -639,12 +644,31 @@ impl ApplicationHandler<()> for State3 {
             return;
         }
 
-        let mut additional_state = self.add.take().unwrap();
+        let mut additional_state: AdditionalRenderingState = self.add.take().unwrap();
         let mut state = self.state.take().unwrap();
 
+        // [1] state.resize is expensive, but needs to happen or the image will become distorted.
+        //
+        // To manage, it waits until a set number (60 frames) until calling the funciton to resize.
+        // This is because it's expected that most of the time, there won't be new settings, so
+        // the image can become temporarily distorted without worrying about it.
+        if additional_state.resize_countdown_started {
+            additional_state.resize_countdown_from_new_settings -= 1;
+
+            if additional_state.resize_countdown_from_new_settings <= 0 {
+                state.resize(state.window.inner_size());
+                additional_state.resize_countdown_started = false;
+            }
+        }
+
         while let Ok(new) = additional_state.channels.new_settings_receiver.try_recv() {
-            // This is expensive, but needs to happen or the image will become distorted.
-            state.resize(state.window.inner_size());
+            // This is expensive, but needs to happen or the image will become distorted. [2]
+            if !additional_state.resize_countdown_started {
+                additional_state.resize_countdown_from_new_settings =
+                    COMPLETE_RESIZE_ON_NEW_SETTINGS_AFTER;
+
+                additional_state.resize_countdown_started = true;
+            }
 
             additional_state.settings_state = new;
             additional_state.new_settings = true;
@@ -675,13 +699,13 @@ impl ApplicationHandler<()> for State3 {
                 on_redraw(&mut state, &mut additional_state);
 
                 if state.should_shutdown {
-                    shutdown::shutdown(event_loop, &state, &additional_state);
+                    let _ = shutdown::shutdown(event_loop, &state, &additional_state);
 
                     return;
                 }
             }
             WindowEvent::CloseRequested => {
-                shutdown::shutdown(event_loop, &state, &additional_state);
+                let _ = shutdown::shutdown(event_loop, &state, &additional_state);
 
                 return;
             }
@@ -761,7 +785,13 @@ impl ApplicationHandler<()> for State3 {
                     println!("shutting down");
                     return;
                 } else {
-                    println!("idk what is happening ");
+                    self.about_to_wait_count += 1;
+
+                    if self.about_to_wait_count > 100 {
+                        panic!(
+                            "shutting down because the wait count was too high without a window"
+                        );
+                    }
                 }
             }
         }
@@ -772,12 +802,14 @@ impl ApplicationHandler<()> for State3 {
 
 pub fn run_mirror_video_output_ui(channels: GpuChannelSide) -> Result<(), EventLoopError> {
     let event_loop = EventLoop::new().unwrap();
+
     let mut state3 = State3 {
         channels: Arc::new(channels),
         window: None,
         counter: 0,
         state: None,
         add: None,
+        about_to_wait_count: 0,
     };
 
     event_loop.run_app(&mut state3)

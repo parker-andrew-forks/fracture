@@ -131,7 +131,7 @@ pub fn start_mirroring(
                     }
                 }
 
-                thread::sleep(Duration::from_millis(100));
+                thread::sleep(Duration::from_secs(1));
             }
         } else {
             'change_watch: loop {

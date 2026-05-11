@@ -306,6 +306,20 @@ impl State {
         additional_state: &mut AdditionalRenderingState,
         dma_data: Option<WgpuTexture>,
     ) -> Result<(), wgpu::SurfaceError> {
+        let mut run_scan = false;
+
+        while let Ok(_) = additional_state
+            .channels
+            .gpu_frame_scan_requested
+            .try_recv()
+        {
+            run_scan = true;
+        }
+
+        if !self.dma_startup_checks.is_complete {
+            run_scan = true;
+        }
+
         self.wrapping_render_count = self.wrapping_render_count.wrapping_add(1);
         let settings = &additional_state.settings_state;
 
@@ -374,31 +388,39 @@ impl State {
                 label: Some("Render Encoder2"),
             });
 
-        {
-            let mut render_pass = ui_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Render Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &pixel_perfect_inner_window_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
+        // with this 1 if statement, we remove a call to every pixel from the cropped region to
+        // draw the user interface. The UI is only ever active when the mouse is over the screen.
+        //
+        // it's a good optimization because it's expected there will be lots of different versions running wasting
+        // lots of resources drawing user interfaces that don't exist.
+        if additional_state.should_render_ui() {
+            {
+                let mut render_pass = ui_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Render Pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &pixel_perfect_inner_window_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                        depth_slice: None,
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
 
-            render_pass.set_pipeline(&self.ui_rendering_pipeline);
-            render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
+                render_pass.set_pipeline(&self.ui_rendering_pipeline);
+                render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
 
-            render_pass.set_vertex_buffer(0, self.vertex_buffer2.slice(..));
-            render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+                render_pass.set_vertex_buffer(0, self.vertex_buffer2.slice(..));
+                render_pass
+                    .set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
 
-            render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
+                render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
+            }
         }
 
         let after_queue = {
@@ -416,39 +438,6 @@ impl State {
 
                 let mut req_by_wgpu_dim = imported_dma.texture().size();
                 req_by_wgpu_dim.width = padded_to_align(req_by_wgpu_dim.width);
-
-                let cpu_copy_dma_buf_data = self.device.create_buffer(&dma_cpu_copy_descriptor);
-
-                let padded_texture_buffer = self.device.create_texture(&wgpu::TextureDescriptor {
-                    label: None,
-                    size: req_by_wgpu_dim,
-                    mip_level_count: imported_dma.texture().mip_level_count(),
-                    sample_count: imported_dma.texture().sample_count(),
-                    dimension: imported_dma.texture().dimension(),
-                    format: imported_dma.texture().format(),
-                    usage: TextureUsages::COPY_DST | TextureUsages::COPY_SRC,
-                    view_formats: &vec![imported_dma.texture().format()],
-                });
-
-                move_copy_etc_encoder.copy_texture_to_texture(
-                    wgpu::TexelCopyTextureInfo {
-                        aspect: wgpu::TextureAspect::All,
-                        texture: &imported_dma.texture(),
-                        mip_level: 0,
-                        origin: wgpu::Origin3d::ZERO,
-                    },
-                    wgpu::TexelCopyTextureInfo {
-                        aspect: wgpu::TextureAspect::All,
-                        texture: &padded_texture_buffer,
-                        mip_level: 0,
-                        origin: wgpu::Origin3d::ZERO,
-                    },
-                    Extent3d {
-                        width: imported_dma.texture().width(),
-                        height: imported_dma.texture().height(),
-                        ..Default::default()
-                    },
-                );
 
                 let crop = if let Some(v) = &additional_state.cropped {
                     v.clone()
@@ -541,7 +530,7 @@ impl State {
                 move_copy_etc_encoder.copy_texture_to_texture(
                     wgpu::TexelCopyTextureInfo {
                         aspect: wgpu::TextureAspect::All,
-                        texture: &padded_texture_buffer,
+                        texture: &imported_dma.texture(),
                         mip_level: 0,
                         origin: wgpu::Origin3d {
                             x: from_display_origin.0,
@@ -562,25 +551,68 @@ impl State {
                     },
                 );
 
-                move_copy_etc_encoder.copy_texture_to_buffer(
-                    wgpu::TexelCopyTextureInfo {
-                        aspect: wgpu::TextureAspect::All,
-                        texture: &padded_texture_buffer,
-                        mip_level: 0,
-                        origin: wgpu::Origin3d::ZERO,
-                    },
-                    wgpu::TexelCopyBufferInfo {
-                        buffer: &cpu_copy_dma_buf_data,
-                        layout: wgpu::TexelCopyBufferLayout {
-                            offset: 0,
-                            bytes_per_row: Some(
-                                padded_texture_buffer.width() * (size_of::<u32>() as u32),
-                            ),
-                            rows_per_image: Some(padded_texture_buffer.height()),
-                        },
-                    },
-                    padded_texture_buffer.size(),
-                );
+                let cpu_copy_dma_buf_data: Option<wgpu::Buffer> = match run_scan {
+                    true => {
+                        let cpu_copy_dma_buf_data =
+                            self.device.create_buffer(&dma_cpu_copy_descriptor);
+
+                        // The padded buffer is only needed to copy to a cpu buffer.
+                        let padded_texture_buffer =
+                            self.device.create_texture(&wgpu::TextureDescriptor {
+                                label: None,
+                                size: req_by_wgpu_dim,
+                                mip_level_count: imported_dma.texture().mip_level_count(),
+                                sample_count: imported_dma.texture().sample_count(),
+                                dimension: imported_dma.texture().dimension(),
+                                format: imported_dma.texture().format(),
+                                usage: TextureUsages::COPY_DST | TextureUsages::COPY_SRC,
+                                view_formats: &vec![imported_dma.texture().format()],
+                            });
+
+                        move_copy_etc_encoder.copy_texture_to_texture(
+                            wgpu::TexelCopyTextureInfo {
+                                aspect: wgpu::TextureAspect::All,
+                                texture: &imported_dma.texture(),
+                                mip_level: 0,
+                                origin: wgpu::Origin3d::ZERO,
+                            },
+                            wgpu::TexelCopyTextureInfo {
+                                aspect: wgpu::TextureAspect::All,
+                                texture: &padded_texture_buffer,
+                                mip_level: 0,
+                                origin: wgpu::Origin3d::ZERO,
+                            },
+                            Extent3d {
+                                width: imported_dma.texture().width(),
+                                height: imported_dma.texture().height(),
+                                ..Default::default()
+                            },
+                        );
+
+                        move_copy_etc_encoder.copy_texture_to_buffer(
+                            wgpu::TexelCopyTextureInfo {
+                                aspect: wgpu::TextureAspect::All,
+                                texture: &padded_texture_buffer,
+                                mip_level: 0,
+                                origin: wgpu::Origin3d::ZERO,
+                            },
+                            wgpu::TexelCopyBufferInfo {
+                                buffer: &cpu_copy_dma_buf_data,
+                                layout: wgpu::TexelCopyBufferLayout {
+                                    offset: 0,
+                                    bytes_per_row: Some(
+                                        padded_texture_buffer.width() * (size_of::<u32>() as u32),
+                                    ),
+                                    rows_per_image: Some(padded_texture_buffer.height()),
+                                },
+                            },
+                            padded_texture_buffer.size(),
+                        );
+
+                        Some(cpu_copy_dma_buf_data)
+                    }
+                    false => None,
+                };
 
                 let mut imported_dim = imported_dma.texture().size();
                 imported_dim.width = padded_to_align(imported_dim.width);
@@ -590,22 +622,7 @@ impl State {
                 let after_queue = move |state| {
                     let state: &mut Self = state;
 
-                    // if !state.first_dma_sent || state.wrapping_render_count % 600 == 0 {
-                    let mut run_scan = false;
-
-                    while let Ok(_) = additional_state
-                        .channels
-                        .gpu_frame_scan_requested
-                        .try_recv()
-                    {
-                        run_scan = true;
-                    }
-
-                    if !state.dma_startup_checks.is_complete {
-                        run_scan = true;
-                    }
-
-                    if run_scan {
+                    if let Some(cpu_copy_dma_buf_data) = cpu_copy_dma_buf_data {
                         let output_buffer = cpu_copy_dma_buf_data;
                         let cpu_data_buffer_slice = output_buffer.slice(..);
 

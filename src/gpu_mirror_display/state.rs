@@ -8,7 +8,10 @@ use crate::{
     stream_creation::utility_gnome_video_frame::PredictedWgpuFrameFormat,
     ui_state::{GreenScreen, TitleBarDisplay, UiState, VideoAspect, WindowBehaviour},
 };
-use std::time::{Duration, SystemTime};
+use std::{
+    sync::mpsc::SendError,
+    time::{Duration, SystemTime},
+};
 use tokio::runtime::Runtime;
 use wgpu::PipelineLayout;
 use winit::{dpi::PhysicalSize, window::Window};
@@ -96,6 +99,8 @@ impl State {
     }
 }
 
+pub const COMPLETE_RESIZE_ON_NEW_SETTINGS_AFTER: i32 = 60;
+
 pub struct AdditionalRenderingState {
     pub mouse_clicks: Vec<((u32, u32), SystemTime)>,
     pub mouse_downs: Vec<((u32, u32), SystemTime)>,
@@ -113,9 +118,20 @@ pub struct AdditionalRenderingState {
     pub channels: std::sync::Arc<GpuChannelSide>,
     pub mouse_resize_state: ResizeInteractionsState,
     pub keep_borders: bool,
+
+    pub resize_countdown_from_new_settings: i32,
+    pub resize_countdown_started: bool,
 }
 
 impl AdditionalRenderingState {
+    pub fn should_render_ui(&self) -> bool {
+        if self.mouse_over_screen || self.mouse_resize_state != ResizeInteractionsState::None {
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn get_active_ui_flags(&self) -> Vec<UiFlag> {
         let mut active_ui_flags = vec![];
 
@@ -158,43 +174,75 @@ impl AdditionalRenderingState {
         active_ui_flags
     }
 
-    pub fn open_settings_ui(&self) {
+    /// Even when reporting Ok(()), it can seem like it failed if it immediately closes again
+    pub fn gtk_open_signal(&self) -> Result<(), OpenSettingsErr> {
         let before = self.settings_state.clone();
 
-        self.channels
-            .gpu_sender_request
-            .send(before)
-            .expect("Settings thread stays");
+        if let Err(e) = self.channels.gpu_sender_request.send(before) {
+            return Err(OpenSettingsErr::FailedToUpdateState(e));
+        }
 
+        // This is just suggestive. It doesn't hold the lock. It can shutdown before
+        // the shutdown call is made or start before the start is called.
         let is_active = { *SETTINGS_IS_RUNNING.lock().unwrap() };
 
         if is_active {
-            self.shutdown_settings_ui();
+            match self.gtk_shutdown_signal() {
+                Err(e) => {
+                    return Err(OpenSettingsErr::ThreadPredictedTerminated(e));
+                }
+                _ => {}
+            }
         }
 
-        let (s, r) = std::sync::mpsc::channel::<_>();
+        let res = self.channels.start_settings_ui.send(());
 
-        let _ = self.channels.start_settings_ui.send(s);
+        if let Err(e) = res {
+            return Err(OpenSettingsErr::FailedToSendStartSignal(e));
+        }
 
-        let _ = r.recv();
+        Ok(())
     }
 
-    pub fn shutdown_settings_ui(&self) {
-        let is_active = *SETTINGS_IS_RUNNING.lock().unwrap();
+    pub fn gtk_shutdown_signal_checked(&self) -> Result<(), ShutdownSettingsErr> {
+        let is_active = { *SETTINGS_IS_RUNNING.lock().unwrap() };
 
         if is_active {
-            let before = self.settings_state.clone();
-
-            self.channels
-                .gpu_sender_request
-                .send(before)
-                .expect("Settings thread stays");
-
-            let (s, r) = std::sync::mpsc::channel::<_>();
-
-            let _ = self.channels.kill_with_confirm.send(s);
-
-            let _ = r.recv();
+            self.gtk_shutdown_signal()
+        } else {
+            Ok(())
         }
     }
+
+    /// Even when reporting Ok(()), it can seem like it failed if it immediately opens again.
+    pub fn gtk_shutdown_signal(&self) -> Result<(), ShutdownSettingsErr> {
+        let before = self.settings_state.clone();
+
+        let res = self.channels.gpu_sender_request.send(before);
+
+        if let Err(e) = res {
+            return Err(ShutdownSettingsErr::SendStateErr(e));
+        }
+
+        let res = self.channels.kill_gtk.send(());
+
+        if let Err(e) = res {
+            return Err(ShutdownSettingsErr::SendKillErr(e));
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub enum OpenSettingsErr {
+    FailedToUpdateState(SendError<UiState>),
+    ThreadPredictedTerminated(ShutdownSettingsErr),
+    FailedToSendStartSignal(SendError<()>),
+}
+
+#[derive(Debug)]
+pub enum ShutdownSettingsErr {
+    SendStateErr(SendError<UiState>),
+    SendKillErr(SendError<()>),
 }

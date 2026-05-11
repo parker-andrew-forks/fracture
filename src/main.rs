@@ -121,6 +121,8 @@ fn main() {
 
     run_mirror_video_output_ui(gpu).expect("The window should always successfully run.");
 
-    window_recording_handle.join().unwrap();
     gtk_user_interfaces_handle.join().unwrap();
+    window_recording_handle.join().unwrap();
+
+    println!("Successful shutdown.");
 }
