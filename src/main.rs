@@ -1,4 +1,4 @@
-use crate::global_application_state::{GTK_SHUTDOWN_AT_END, PIPEWIRE_SHUTDOWN_AT_END, SAFE_MODE};
+use crate::global_application_state::SAFE_MODE;
 use crate::gpu_mirror_display::defaults::FP_ID;
 use application_channel_creator::ApplicationChannelsCreator;
 use ashpd::desktop::notification::{NotificationProxy, Priority};
@@ -41,12 +41,6 @@ pub fn send_notifcation(title: &str, msg: &str) -> ashpd::Result<()> {
         .unwrap();
 
     tokio.block_on(async { send_ash_notifcation(&title, &msg).await })
-}
-
-#[derive(Debug)]
-pub struct JoinedAtEnd {
-    pipewire: bool,
-    gtk: bool,
 }
 
 fn main() {
@@ -127,52 +121,8 @@ fn main() {
 
     run_mirror_video_output_ui(gpu).expect("The window should always successfully run.");
 
-    let mut temp = JoinedAtEnd {
-        pipewire: true,
-        gtk: true,
-    };
+    gtk_user_interfaces_handle.join().unwrap();
+    window_recording_handle.join().unwrap();
 
-    if !*PIPEWIRE_SHUTDOWN_AT_END.lock().unwrap() {
-        match window_recording_handle.is_finished() {
-            true => println!("pw result: {:#?}", window_recording_handle.join()),
-            false => {
-                temp.pipewire = false;
-                println!("the pw thread is being dropped without finishing.")
-            }
-        }
-    } else {
-        window_recording_handle.join().unwrap();
-    }
-
-    // if this is true, and we made it to here, it either panicked or it failed to shutdown within a time limit.
-    if !*GTK_SHUTDOWN_AT_END.lock().unwrap() {
-        match gtk_user_interfaces_handle.is_finished() {
-            true => println!("gtk result: {:#?}", gtk_user_interfaces_handle.join()),
-            false => {
-                temp.gtk = false;
-                println!("the gtk thread is being dropped without finishing.");
-            }
-        }
-    } else {
-        gtk_user_interfaces_handle.join().unwrap();
-    }
-
-    let temp2;
-
-    if !temp.gtk || !temp.pipewire {
-        temp2 = Err(temp);
-    } else {
-        temp2 = Ok(temp);
-    }
-
-    match &temp2 {
-        Ok(_) => {
-            println!("Successful shutdown.")
-        }
-        Err(_) => {
-            println!("{:#?}", temp2);
-
-            std::process::exit(0);
-        }
-    }
+    println!("Successful shutdown.");
 }

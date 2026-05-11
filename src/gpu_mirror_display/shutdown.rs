@@ -1,10 +1,6 @@
-use std::{sync::mpsc::channel, thread, time::Duration};
-
-use winit::event_loop::ActiveEventLoop;
-
-use crate::global_application_state::{GTK_SHUTDOWN_AT_END, PIPEWIRE_SHUTDOWN_AT_END};
-
 use super::state::{AdditionalRenderingState, State};
+use std::time::Duration;
+use winit::event_loop::ActiveEventLoop;
 
 pub fn start_shutdown(s: &mut State) {
     s.should_shutdown = true;
@@ -68,7 +64,6 @@ pub fn shutdown(
                 .recv_timeout(Duration::from_millis(100))
             {
                 Ok(_) => {
-                    *GTK_SHUTDOWN_AT_END.lock().unwrap() = true;
                     gtk = Ok(());
                     break 'bad_logic_loop;
                 }
@@ -102,11 +97,7 @@ pub fn shutdown(
             .dbus_shutdown_conf
             .recv_timeout(Duration::from_secs(3))
         {
-            Ok(_) => {
-                *PIPEWIRE_SHUTDOWN_AT_END.lock().unwrap() = true;
-
-                pw = Ok(())
-            }
+            Ok(_) => pw = Ok(()),
             Err(e) => pw = Err(PipewireShutdownErr::TimeoutOrTermination(e)),
         }
     } else {
@@ -128,22 +119,18 @@ pub fn shutdown(
 
     println!("{:#?}", wrapped);
 
-    let (s, r) = channel();
-
-    thread::spawn(move || match r.recv_timeout(Duration::from_secs(3)) {
+    match wrapped {
         Ok(_) => {}
-        v @ Err(_) => {
-            println!("{:#?}", v);
+        Err(_) => {
+            println!(
+                "The process is exiting abnormally. There was an error reported on one of the threads and I think calling to exit the event loop will hang."
+            );
 
-            println!("The event loop failed to exit, and a call to exit(0) was made.");
-
-            std::process::exit(0);
+            std::process::abort();
         }
-    });
+    }
 
     ev.exit();
-
-    let _ = s.send(());
 
     wrapped
 }
