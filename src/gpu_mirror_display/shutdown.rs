@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{sync::mpsc::channel, thread, time::Duration};
 
 use winit::event_loop::ActiveEventLoop;
 
@@ -128,7 +128,22 @@ pub fn shutdown(
 
     println!("{:#?}", wrapped);
 
+    let (s, r) = channel();
+
+    thread::spawn(move || match r.recv_timeout(Duration::from_secs(3)) {
+        Ok(_) => {}
+        v @ Err(_) => {
+            println!("{:#?}", v);
+
+            println!("The event loop failed to exit, and a call to exit(0) was made.");
+
+            std::process::exit(0);
+        }
+    });
+
     ev.exit();
+
+    let _ = s.send(());
 
     wrapped
 }

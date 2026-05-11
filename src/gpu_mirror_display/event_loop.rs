@@ -788,16 +788,9 @@ impl ApplicationHandler<()> for State3 {
                     self.about_to_wait_count += 1;
 
                     if self.about_to_wait_count > 100 {
-                        println!(
+                        panic!(
                             "shutting down because the wait count was too high without a window"
                         );
-                        let res = shutdown::shutdown(
-                            &ev,
-                            self.state.as_ref().unwrap(),
-                            self.add.as_ref().unwrap(),
-                        );
-
-                        println!("{:#?}", res);
                     }
                 }
             }
