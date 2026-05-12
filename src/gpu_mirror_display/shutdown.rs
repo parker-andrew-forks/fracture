@@ -27,10 +27,13 @@ pub enum PipewireShutdownErr {
 
 pub fn shutdown(
     ev: &ActiveEventLoop,
-    _state: &State,
+    state: &State,
     additional: &AdditionalRenderingState,
 ) -> Result<ShutdownResult, ShutdownResult> {
     println!("Shutting down.");
+
+    // minimize the window to show response to the user, then complete the slow shutdown
+    state.window.set_minimized(true);
 
     let pw_1 = additional.channels.terminate_pipewire_stream.send(());
     let gtk_1 = additional.channels.terminate_settings_ui.send(());
@@ -92,10 +95,12 @@ pub fn shutdown(
     let pw;
 
     if pw_1.is_ok() {
+        // For other Desktop Environments that are not Gnome, there's a loop that sleeps for 5 seconds. If unlucky,
+        // it can require waiting a full 5 seconds.
         match additional
             .channels
             .dbus_shutdown_conf
-            .recv_timeout(Duration::from_secs(3))
+            .recv_timeout(Duration::from_millis(5500))
         {
             Ok(_) => pw = Ok(()),
             Err(e) => pw = Err(PipewireShutdownErr::TimeoutOrTermination(e)),
@@ -130,6 +135,8 @@ pub fn shutdown(
         }
     }
 
+    // if either thread fails to shutdown i've not been successful calling `exit`. maybe
+    // it's UB, maybe it's the foreign code, i don't know yet.
     ev.exit();
 
     wrapped
