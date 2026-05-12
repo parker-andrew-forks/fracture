@@ -7,12 +7,6 @@ pub fn start_shutdown(s: &mut State) {
 }
 
 #[derive(Debug)]
-pub struct ShutdownResult {
-    gtk_settings_ui: Result<(), SettingsGtkShutdownErr>,
-    pipewire_threads: Result<(), PipewireShutdownErr>,
-}
-
-#[derive(Debug)]
 pub enum SettingsGtkShutdownErr {
     ThreadAlreadyTerminated,
     Disconnected(std::sync::mpsc::RecvTimeoutError),
@@ -29,10 +23,10 @@ pub fn shutdown(
     ev: &ActiveEventLoop,
     _state: &State,
     additional: &AdditionalRenderingState,
-) -> Result<ShutdownResult, ShutdownResult> {
+) -> Result<(), SettingsGtkShutdownErr> {
     println!("Shutting down.");
 
-    let pw_1 = additional.channels.terminate_pipewire_stream.send(());
+    let _pw_1 = additional.channels.terminate_pipewire_stream.send(());
     let gtk_1 = additional.channels.terminate_settings_ui.send(());
 
     let gtk;
@@ -89,37 +83,9 @@ pub fn shutdown(
         gtk = Err(SettingsGtkShutdownErr::ThreadAlreadyTerminated);
     }
 
-    let pw;
+    println!("gtk: {:#?}", gtk);
 
-    if pw_1.is_ok() {
-        match additional
-            .channels
-            .dbus_shutdown_conf
-            .recv_timeout(Duration::from_secs(3))
-        {
-            Ok(_) => pw = Ok(()),
-            Err(e) => pw = Err(PipewireShutdownErr::TimeoutOrTermination(e)),
-        }
-    } else {
-        pw = Err(PipewireShutdownErr::ThreadAlreadyTerminated);
-    }
-
-    let full = ShutdownResult {
-        gtk_settings_ui: gtk,
-        pipewire_threads: pw,
-    };
-
-    let wrapped;
-
-    if full.gtk_settings_ui.is_ok() && full.pipewire_threads.is_ok() {
-        wrapped = Ok(full);
-    } else {
-        wrapped = Err(full);
-    }
-
-    println!("{:#?}", wrapped);
-
-    match wrapped {
+    match gtk {
         Ok(_) => {}
         Err(_) => {
             println!(
@@ -132,5 +98,5 @@ pub fn shutdown(
 
     ev.exit();
 
-    wrapped
+    Ok(())
 }
