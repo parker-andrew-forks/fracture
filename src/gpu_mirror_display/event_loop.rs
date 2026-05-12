@@ -12,7 +12,6 @@ use crate::gpu_mirror_display::postprocessing_shaders::{
     define_postprocessing_mirror_shader, if_shader_compilation_requested,
 };
 use crate::gpu_mirror_display::render::on_redraw;
-use crate::gpu_mirror_display::shutdown::PipewireShutdownErr;
 use crate::gpu_mirror_display::state::{
     AdditionalRenderingState, COMPLETE_RESIZE_ON_NEW_SETTINGS_AFTER, DmaStartupChecks, State,
 };
@@ -26,7 +25,6 @@ use lamco_wgpu::SupportedFormat;
 use std::mem;
 use std::num::NonZero;
 use std::sync::Arc;
-use std::time::Duration;
 use wgpu::util::DeviceExt;
 use wgpu::{BufferDescriptor, BufferUsages, Extent3d, Surface};
 use winit::application::ApplicationHandler;
@@ -803,52 +801,16 @@ impl ApplicationHandler<()> for State3 {
 }
 
 pub fn run_mirror_video_output_ui(channels: GpuChannelSide) -> Result<(), EventLoopError> {
-    let gpu_channels = Arc::new(channels);
+    let event_loop = EventLoop::new().unwrap();
 
-    let app_result = {
-        {
-            let event_loop = EventLoop::new().unwrap();
-
-            let mut state3 = State3 {
-                channels: Arc::clone(&gpu_channels),
-                window: None,
-                counter: 0,
-                state: None,
-                add: None,
-                about_to_wait_count: 0,
-            };
-
-            event_loop.run_app(&mut state3)
-        }
+    let mut state3 = State3 {
+        channels: Arc::new(channels),
+        window: None,
+        counter: 0,
+        state: None,
+        add: None,
+        about_to_wait_count: 0,
     };
 
-    // pw has a loop that waits 5 seconds on environments that are not Gnome. 5
-    // seconds is a long time, so the confirmation for ending isn't checked until
-    // after trying to exit the event loop.
-    {
-        let pw;
-
-        match gpu_channels
-            .dbus_shutdown_conf
-            .recv_timeout(Duration::from_millis(6500))
-        {
-            Ok(_) => pw = Ok(()),
-            Err(e) => pw = Err(PipewireShutdownErr::TimeoutOrTermination(e)),
-        };
-
-        println!("pw: {:#?}", pw);
-
-        match pw {
-            Ok(_) => {}
-            Err(_) => {
-                println!(
-                    "The process is exiting abnormally. The pw thread did't report a successful exit so the process is being aborted."
-                );
-
-                std::process::abort();
-            }
-        }
-    }
-
-    app_result
+    event_loop.run_app(&mut state3)
 }
