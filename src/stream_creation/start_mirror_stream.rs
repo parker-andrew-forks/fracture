@@ -29,7 +29,6 @@ use std::{
         raw::c_int,
     },
     sync::{Arc, Mutex, mpsc},
-    thread::{self},
     time::{Duration, SystemTime},
 };
 
@@ -99,10 +98,6 @@ pub fn start_mirroring(
             let mut last_is_maximized = copy.cache.maximized.unwrap_or(0);
 
             'change_watch: loop {
-                if let Ok(_kill) = stop_signal.try_recv() {
-                    break 'change_watch;
-                }
-
                 let _ = copy.refresh();
 
                 if (last_w, last_h, last_is_maximized)
@@ -131,14 +126,15 @@ pub fn start_mirroring(
                     }
                 }
 
-                thread::sleep(Duration::from_secs(1));
+                match stop_signal.recv_timeout(Duration::from_secs(1)) {
+                    Ok(_) => {
+                        break 'change_watch;
+                    }
+                    Err(_) => {}
+                }
             }
         } else {
             'change_watch: loop {
-                if let Ok(_kill) = stop_signal.try_recv() {
-                    break 'change_watch;
-                }
-
                 // It was originally written for Gnome, then changed to handle any Linux DE
                 // that supports XDG Desktop Portals.
                 let fake_data = WindowDimensionsData {
@@ -155,7 +151,12 @@ pub fn start_mirroring(
                     );
                 }
 
-                thread::sleep(Duration::from_millis(5000));
+                match stop_signal.recv_timeout(Duration::from_secs(5)) {
+                    Ok(_) => {
+                        break 'change_watch;
+                    }
+                    Err(_) => {}
+                }
             }
         }
     });
