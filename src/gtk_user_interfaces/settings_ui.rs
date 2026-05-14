@@ -1,6 +1,6 @@
 use crate::{
     application_channel_creator::UiChannelSide,
-    global_application_state::{FOUND_VERSION, VERSION},
+    global_application_state::{AVAILABLE_PRESETS, FOUND_VERSION, VERSION},
     gpu_mirror_display::postprocessing_shaders::DEFAULT_POSTPROCESSOR,
     shaders::{
         SHADER_COLOR_GRADIENT, SHADER_FLIP_HORIZONTAL, SHADER_FLIP_VERTICAL, SHADER_INVERT_COLORS,
@@ -362,6 +362,40 @@ pub fn rebuild(v: &Rc<RefCell<UiState>>) -> gtk::Box {
 
     min_display.append(&nearest);
     min_display.append(&linear);
+
+    let presents = gtk::Box::builder()
+        .valign(gtk4::Align::Start)
+        .spacing(10)
+        .orientation(gtk4::Orientation::Horizontal)
+        .build();
+
+    let avail = { AVAILABLE_PRESETS.lock().unwrap().clone() };
+
+    for preset in avail.iter() {
+        let label = format!("{:?}", preset);
+
+        let btn = gtk::ToggleButton::with_label(&label);
+        let v2 = v.clone();
+
+        let pre = preset.clone();
+
+        btn.connect_clicked(move |_| {
+            let state = v2.clone();
+
+            let mut temp = state.borrow_mut();
+            let temp: &mut UiState = temp.update();
+
+            temp.should_define_new_preset = true;
+
+            temp.preset = pre;
+        });
+
+        if { v.borrow().preset } == *preset {
+            btn.set_active(true);
+        }
+
+        presents.append(&btn);
+    }
 
     let hittest = gtk::Box::builder()
         .valign(gtk4::Align::Start)
@@ -1275,6 +1309,9 @@ pub fn rebuild(v: &Rc<RefCell<UiState>>) -> gtk::Box {
     base.append(&gtk::Label::new("WindowInteractions".into()));
     base.append(&hittest);
 
+    base.append(&gtk::Label::new("Presents".into()));
+    base.append(&presents);
+
     base.append(&gtk::Label::new("[Debug] SetUiState".into()));
     let force_update = Button::with_label("Check SetUiState");
 
@@ -1403,6 +1440,7 @@ pub fn rebuild(v: &Rc<RefCell<UiState>>) -> gtk::Box {
                 FilterMode::Linear
             },
             window_interactions: WindowInteractions::Interactable,
+            preset: Default::default(),
         };
 
         let mut result = temp.build_new_full_settings_state();

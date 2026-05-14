@@ -1,6 +1,6 @@
 use crate::application_channel_creator::GpuChannelSide;
-use crate::global_application_state::SAFE_MODE;
-use crate::gpu_mirror_display::defaults::{APPLICATION_NAME, CROP_COLOR};
+use crate::global_application_state::{AVAILABLE_PRESETS, SAFE_MODE};
+use crate::gpu_mirror_display::defaults::{APPLICATION_NAME, CROP_COLOR, PRESENT_PREFERENCES};
 use crate::gpu_mirror_display::input::events_mouse::ResizeInteractionsState;
 use crate::gpu_mirror_display::input::on_input_events;
 use crate::gpu_mirror_display::input::utility_mouse::remove_expired_mouse_events;
@@ -18,8 +18,8 @@ use crate::gpu_mirror_display::state::{
 use crate::gpu_mirror_display::utility_vertex::{VERTICES, Vertex};
 use crate::gpu_mirror_display::{binary_images, shutdown};
 use crate::ui_state::{
-    ScaleDecision, TitleBarDisplay, UiState, VideoAspect, VideoLocation, WindowBackground,
-    WindowBehaviour,
+    DEFAULT_MAGNIFY_FILTER, DEFAULT_MINIFY_FILTER, ScaleDecision, TitleBarDisplay, UiState,
+    VideoAspect, VideoLocation, WindowBackground, WindowBehaviour,
 };
 use lamco_wgpu::SupportedFormat;
 use std::mem;
@@ -235,6 +235,16 @@ impl ApplicationHandler<()> for State3 {
 
         let surface_caps = surface.get_capabilities(&adapter);
 
+        let ordered_presets: Vec<_> = PRESENT_PREFERENCES
+            .iter()
+            .filter(|pre| *&surface_caps.present_modes.contains(pre))
+            .map(|v| *v)
+            .collect();
+
+        {
+            *AVAILABLE_PRESETS.lock().unwrap() = ordered_presets.clone();
+        }
+
         let selected_surface_capabilities =
             select_caps_with_preferences(surface_caps, video_format.format);
         // surface_caps.
@@ -348,11 +358,8 @@ impl ApplicationHandler<()> for State3 {
         let diffuse_texture_view =
             diffuse_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let diffuse_sampler: wgpu::Sampler = define_primary_sampler(
-            &device,
-            crate::ui_state::DEFAULT_MAGNIFY_FILTER,
-            crate::ui_state::DEFAULT_MINIFY_FILTER,
-        );
+        let diffuse_sampler: wgpu::Sampler =
+            define_primary_sampler(&device, DEFAULT_MAGNIFY_FILTER, DEFAULT_MINIFY_FILTER);
 
         let texture_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -530,6 +537,8 @@ impl ApplicationHandler<()> for State3 {
             overlay_size,
         );
 
+        let sel = selected_surface_capabilities.present.clone();
+
         let mut state = State {
             surface,
             queue,
@@ -583,6 +592,9 @@ impl ApplicationHandler<()> for State3 {
             ui_flags: Some(ui_flags),
             texture_bind_group_layout: Some(texture_bind_group_layout),
             should_shutdown: false,
+            available_presents: ordered_presets,
+            default_selected_caps: selected_surface_capabilities,
+            active_present: sel,
         };
 
         let mut additional_state = AdditionalRenderingState {
@@ -673,6 +685,8 @@ impl ApplicationHandler<()> for State3 {
             additional_state.settings_state = new;
             additional_state.new_settings = true;
 
+            let mut should_update = false;
+
             if additional_state
                 .settings_state
                 .should_define_new_primary_sampler
@@ -687,6 +701,72 @@ impl ApplicationHandler<()> for State3 {
                     .settings_state
                     .should_define_new_primary_sampler = false;
 
+                should_update = true;
+            }
+
+            if additional_state.settings_state.should_define_new_preset {
+                let pre = additional_state.settings_state.preset.clone();
+
+                let cfg = match state.available_presents.contains(&pre) {
+                    true => {
+                        let PhysicalSize {
+                            width: w,
+                            height: h,
+                        } = state.window.inner_size();
+
+                        let config = wgpu::SurfaceConfiguration {
+                            usage: wgpu::TextureUsages::COPY_SRC
+                                | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                            format: state.default_selected_caps.texture,
+                            width: w,
+                            height: h,
+                            present_mode: pre,
+                            alpha_mode: state.default_selected_caps.alpha,
+                            view_formats: vec![],
+                            desired_maximum_frame_latency: 2,
+                        };
+
+                        state.active_present = pre.clone();
+                        state.surface.configure(&state.device, &config);
+
+                        config
+                    }
+                    false => {
+                        additional_state.settings_state.preset =
+                            state.default_selected_caps.present.clone();
+
+                        let PhysicalSize {
+                            width: w,
+                            height: h,
+                        } = state.window.inner_size();
+
+                        let config = wgpu::SurfaceConfiguration {
+                            usage: wgpu::TextureUsages::COPY_SRC
+                                | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                            format: state.default_selected_caps.texture,
+                            width: w,
+                            height: h,
+                            present_mode: state.default_selected_caps.present,
+                            alpha_mode: state.default_selected_caps.alpha,
+                            view_formats: vec![],
+                            desired_maximum_frame_latency: 2,
+                        };
+
+                        state.active_present = state.default_selected_caps.present.clone();
+                        state.surface.configure(&state.device, &config);
+
+                        config
+                    }
+                };
+
+                state.config = cfg;
+
+                should_update = true;
+
+                additional_state.settings_state.should_define_new_preset = false;
+            }
+
+            if should_update {
                 additional_state
                     .channels
                     .gpu_sender_request

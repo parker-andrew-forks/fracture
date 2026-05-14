@@ -27,13 +27,10 @@ pub enum PipewireShutdownErr {
 
 pub fn shutdown(
     ev: &ActiveEventLoop,
-    state: &State,
+    _state: &State,
     additional: &AdditionalRenderingState,
 ) -> Result<ShutdownResult, ShutdownResult> {
     println!("Shutting down.");
-
-    // minimize the window to show response to the user, then complete the slow shutdown
-    state.window.set_minimized(true);
 
     let pw_1 = additional.channels.terminate_pipewire_stream.send(());
     let gtk_1 = additional.channels.terminate_settings_ui.send(());

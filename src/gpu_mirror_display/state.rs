@@ -3,7 +3,7 @@ use super::{
 };
 use crate::{
     application_channel_creator::GpuChannelSide,
-    gpu_mirror_display::event_loop::WrappedBridge,
+    gpu_mirror_display::{event_loop::WrappedBridge, pipeline_definitions::SelectedGpuCaps},
     gtk_user_interfaces::settings_ui::SETTINGS_IS_RUNNING,
     stream_creation::utility_gnome_video_frame::PredictedWgpuFrameFormat,
     ui_state::{GreenScreen, TitleBarDisplay, UiState, VideoAspect, WindowBehaviour},
@@ -13,7 +13,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 use tokio::runtime::Runtime;
-use wgpu::PipelineLayout;
+use wgpu::{PipelineLayout, PresentMode};
 use winit::{dpi::PhysicalSize, window::Window};
 
 #[derive(Debug, Clone)]
@@ -64,6 +64,10 @@ pub struct State {
     pub texture_bind_group_layout: Option<wgpu::BindGroupLayout>,
 
     pub should_shutdown: bool,
+
+    pub available_presents: Vec<PresentMode>,
+    pub default_selected_caps: SelectedGpuCaps,
+    pub active_present: PresentMode,
 }
 
 impl State {

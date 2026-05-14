@@ -1,7 +1,9 @@
-use crate::gpu_mirror_display::{
-    defaults::CROP_COLOR, postprocessing_shaders::PostprocessingErrors,
+use crate::{
+    global_application_state::AVAILABLE_PRESETS,
+    gpu_mirror_display::{defaults::CROP_COLOR, postprocessing_shaders::PostprocessingErrors},
 };
 use serde::{Deserialize, Serialize};
+use wgpu::PresentMode;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum VideoLocation {
@@ -137,6 +139,8 @@ pub struct UiState {
     pub minify_filter: wgpu::FilterMode,
     pub should_define_new_primary_sampler: bool,
     pub window_interactions: WindowInteractions,
+    pub preset: wgpu::PresentMode,
+    pub should_define_new_preset: bool,
 }
 
 impl UiState {
@@ -160,6 +164,7 @@ impl UiState {
             magnify_filter: temp.magnify_filter,
             minify_filter: temp.minify_filter,
             window_interactions: temp.window_interactions,
+            preset: temp.preset,
         };
 
         temp
@@ -185,6 +190,7 @@ pub struct SetUiState {
     pub magnify_filter: wgpu::FilterMode,
     pub minify_filter: wgpu::FilterMode,
     pub window_interactions: WindowInteractions,
+    pub preset: PresentMode,
 }
 
 impl SetUiState {
@@ -207,7 +213,18 @@ impl SetUiState {
             magnify_filter,
             minify_filter,
             window_interactions,
+            preset,
         } = temp;
+
+        let selected_preset;
+
+        let available_presets = { AVAILABLE_PRESETS.lock().unwrap().clone() };
+
+        if available_presets.contains(&preset) {
+            selected_preset = preset;
+        } else {
+            selected_preset = available_presets[0];
+        }
 
         let mut temp = UiState {
             display_title,
@@ -225,6 +242,8 @@ impl SetUiState {
             minify_filter,
             should_define_new_primary_sampler: true,
             window_interactions,
+            preset: selected_preset,
+            should_define_new_preset: true,
         };
 
         if let Some(postprocessor) = &mut temp.postprocessor {
@@ -266,6 +285,8 @@ impl Default for UiState {
             minify_filter: DEFAULT_MINIFY_FILTER,
             should_define_new_primary_sampler: true,
             window_interactions: WindowInteractions::Interactable,
+            preset: *&AVAILABLE_PRESETS.lock().unwrap()[0].clone(),
+            should_define_new_preset: true,
         }
     }
 }
@@ -297,6 +318,7 @@ pub struct CreateUiState {
     pub magnify_filter: wgpu::FilterMode,
     pub minify_filter: wgpu::FilterMode,
     pub window_interactions: WindowInteractions,
+    pub preset: PresentMode,
 }
 
 impl Default for CreateUiState {
@@ -317,6 +339,8 @@ impl Default for CreateUiState {
             magnify_filter,
             minify_filter,
             should_define_new_primary_sampler: _,
+            preset: presets,
+            should_define_new_preset: _,
         } = UiState::default();
 
         Self {
@@ -331,6 +355,7 @@ impl Default for CreateUiState {
             magnify_filter,
             minify_filter,
             window_interactions: window_interactions,
+            preset: presets,
         }
     }
 }
@@ -347,6 +372,7 @@ impl Into<SetUiState> for CreateUiState {
             magnify_filter,
             minify_filter,
             window_interactions,
+            preset: presets,
         } = self;
 
         SetUiState {
@@ -363,6 +389,7 @@ impl Into<SetUiState> for CreateUiState {
             magnify_filter,
             minify_filter,
             window_interactions: window_interactions,
+            preset: presets,
         }
     }
 }
