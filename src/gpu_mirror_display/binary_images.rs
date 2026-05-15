@@ -1,8 +1,10 @@
+use crate::gpu_mirror_display::utility_texture::DmaOrCpuMemory;
+
 use super::utility_texture::OverlayImage;
 use wgpu::{Extent3d, TexelCopyBufferLayout};
 
 pub const ICON_SELECT_SCREEN_AREA: OverlayImage = OverlayImage {
-    data: include_bytes!("../../img/bin/1.bin"),
+    data: DmaOrCpuMemory::Cpu(include_bytes!("../../img/bin/1.bin")),
     dimensions: Extent3d {
         width: 500,
         height: 500,
@@ -16,7 +18,7 @@ pub const ICON_SELECT_SCREEN_AREA: OverlayImage = OverlayImage {
 };
 
 pub const ICON_EXIT_FILL: OverlayImage = OverlayImage {
-    data: include_bytes!("../../img/bin/2.bin"),
+    data: DmaOrCpuMemory::Cpu(include_bytes!("../../img/bin/2.bin")),
     dimensions: Extent3d {
         width: 25,
         height: 25,
@@ -30,7 +32,7 @@ pub const ICON_EXIT_FILL: OverlayImage = OverlayImage {
 };
 
 pub const ICON_EXIT_NO_FILL: OverlayImage = OverlayImage {
-    data: include_bytes!("../../img/bin/3.bin"),
+    data: DmaOrCpuMemory::Cpu(include_bytes!("../../img/bin/3.bin")),
     dimensions: Extent3d {
         width: 25,
         height: 25,
@@ -44,7 +46,7 @@ pub const ICON_EXIT_NO_FILL: OverlayImage = OverlayImage {
 };
 
 pub const ICON_SQUARE_NO_FILL: OverlayImage = OverlayImage {
-    data: include_bytes!("../../img/bin/4.bin"),
+    data: DmaOrCpuMemory::Cpu(include_bytes!("../../img/bin/4.bin")),
     dimensions: Extent3d {
         width: 25,
         height: 25,
@@ -58,7 +60,7 @@ pub const ICON_SQUARE_NO_FILL: OverlayImage = OverlayImage {
 };
 
 pub const ICON_SQUARE_FILL: OverlayImage = OverlayImage {
-    data: include_bytes!("../../img/bin/5.bin"),
+    data: DmaOrCpuMemory::Cpu(include_bytes!("../../img/bin/5.bin")),
     dimensions: Extent3d {
         width: 25,
         height: 25,
@@ -72,7 +74,7 @@ pub const ICON_SQUARE_FILL: OverlayImage = OverlayImage {
 };
 
 pub const ICON_MINIMIZE_FILL: OverlayImage = OverlayImage {
-    data: include_bytes!("../../img/bin/6.bin"),
+    data: DmaOrCpuMemory::Cpu(include_bytes!("../../img/bin/6.bin")),
     dimensions: Extent3d {
         width: 25,
         height: 25,
@@ -86,7 +88,7 @@ pub const ICON_MINIMIZE_FILL: OverlayImage = OverlayImage {
 };
 
 pub const ICON_MINIMIZE_NO_FILL: OverlayImage = OverlayImage {
-    data: include_bytes!("../../img/bin/7.bin"),
+    data: DmaOrCpuMemory::Cpu(include_bytes!("../../img/bin/7.bin")),
     dimensions: Extent3d {
         width: 25,
         height: 25,
@@ -100,7 +102,7 @@ pub const ICON_MINIMIZE_NO_FILL: OverlayImage = OverlayImage {
 };
 
 pub const ICON_GEAR_NO_FILL: OverlayImage = OverlayImage {
-    data: include_bytes!("../../img/bin/8.bin"),
+    data: DmaOrCpuMemory::Cpu(include_bytes!("../../img/bin/8.bin")),
     dimensions: Extent3d {
         width: 50,
         height: 50,
@@ -114,7 +116,7 @@ pub const ICON_GEAR_NO_FILL: OverlayImage = OverlayImage {
 };
 
 pub const ICON_GEAR_FILL: OverlayImage = OverlayImage {
-    data: include_bytes!("../../img/bin/9.bin"),
+    data: DmaOrCpuMemory::Cpu(include_bytes!("../../img/bin/9.bin")),
     dimensions: Extent3d {
         width: 50,
         height: 50,
@@ -128,7 +130,7 @@ pub const ICON_GEAR_FILL: OverlayImage = OverlayImage {
 };
 
 pub const ICON_PIP_NO_FILL: OverlayImage = OverlayImage {
-    data: include_bytes!("../../img/bin/10.bin"),
+    data: DmaOrCpuMemory::Cpu(include_bytes!("../../img/bin/10.bin")),
     dimensions: Extent3d {
         width: 50,
         height: 50,
@@ -142,7 +144,7 @@ pub const ICON_PIP_NO_FILL: OverlayImage = OverlayImage {
 };
 
 pub const ICON_PIP_FILL: OverlayImage = OverlayImage {
-    data: include_bytes!("../../img/bin/11.bin"),
+    data: DmaOrCpuMemory::Cpu(include_bytes!("../../img/bin/11.bin")),
     dimensions: Extent3d {
         width: 50,
         height: 50,

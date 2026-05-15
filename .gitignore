@@ -2,6 +2,6 @@
 /flatpak/repo/*
 /flatpak/builddir/*
 /flatpak/.flatpak-builder/*
-/flatpak/slashshade
+/flatpak/fracture
 /flatpak/launcher
-/flatpak/org.flatpak.slashshade-test.flatpak
+/flatpak/systems.fracture.launcher.flatpak

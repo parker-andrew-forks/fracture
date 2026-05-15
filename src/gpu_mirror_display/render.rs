@@ -18,6 +18,7 @@ use crate::{
     },
     gpu_mirror_display::{
         state::DmaStartupChecks,
+        utility_texture::DmaOrCpuMemory,
         window_cropping::{InitialAbsoluteFramePosition, InitialAbsoluteWindowPosition, Size},
     },
     ui_state::{GreenScreen, VideoAspect, VideoLocation, WindowBackground, WindowBehaviour},
@@ -861,7 +862,16 @@ fn create_bindings_write_texture(
         state.last_fracture_display_origin = positioned_frame.origin.clone();
         state.last_fracture_dimensions = positioned_frame.dimensions_after.clone();
 
+        let data = match &positioned_frame.data {
+            DmaOrCpuMemory::Dma => None,
+            DmaOrCpuMemory::Cpu(items) => Some(items),
+        };
+
         if let FrameData::CpuData(_) = &*last.frame_data {
+            if data.is_none() {
+                return;
+            }
+
             state.queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
                     texture: &tex,
@@ -869,7 +879,7 @@ fn create_bindings_write_texture(
                     origin: positioned_frame.origin,
                     aspect: wgpu::TextureAspect::All,
                 },
-                positioned_frame.data,
+                data.unwrap(),
                 positioned_frame.layout_after,
                 positioned_frame.dimensions_after,
             );

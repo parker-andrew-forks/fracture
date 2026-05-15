@@ -27,33 +27,20 @@ pub(crate) fn crop_frame_to_origin<'a>(
     positioned_frame
 }
 
-// #[derive(Debug, Default)]
 pub struct OverlayImage<'a> {
-    pub data: &'a [u8],
+    pub data: DmaOrCpuMemory<'a>,
     pub dimensions: Extent3d,
     pub layout: TexelCopyBufferLayout,
 }
-
-/// This needs to be removed. It wastes lots of memory. It exists because
-/// CPU buffer rendering was written first. When I wrote the CPU version, I avoided
-/// buffer copies in the pipeline by managing CPU memory more directly.
-///
-/// When I went back to add DmaBuffers, I couldn't easily break apart this array
-/// from the methods I had written. Some of the methods reference this array
-/// and it had to be large enough to always be within it even though it doesn't
-/// contain any data when using DmaBuffers.
-///
-/// In the future it should just not exist.
-pub static FAKE: &'static [u8] = &[0u8; (3840 * 2160 * 4 * 2)];
 
 pub(crate) fn define_frame<'a>(
     frame: &'a Arc<LastReported>,
     cropped: &'a CroppedArea,
 ) -> OverlayImage<'a> {
-    let frame_data: (&'a [u8], FrameLayout) = match &*frame.frame_data {
+    let frame_data: (DmaOrCpuMemory<'a>, FrameLayout) = match &*frame.frame_data {
         FrameData::CpuData(cpu_frame) => {
             let temp = &(cpu_frame.frame_data);
-            (&temp, (&cpu_frame.layout).clone())
+            (DmaOrCpuMemory::Cpu(&temp), (&cpu_frame.layout).clone())
         }
         FrameData::DmaBuffers(dma_frame) => {
             let size = dma_frame.frame_data.size();
@@ -64,14 +51,14 @@ pub(crate) fn define_frame<'a>(
                 bytes_per_pixel: 4,
             };
 
-            (FAKE, temp)
+            (DmaOrCpuMemory::Dma, temp)
         }
     };
 
     let (data, layout) = frame_data;
 
     let overlay = OverlayImage {
-        data: &data,
+        data: data,
         dimensions: Extent3d {
             width: cropped.size.width + cropped.relative_to_frame_position.x,
             height: cropped.size.height + cropped.relative_to_frame_position.y,
@@ -87,11 +74,16 @@ pub(crate) fn define_frame<'a>(
     overlay
 }
 
+pub enum DmaOrCpuMemory<'a> {
+    Dma,
+    Cpu(&'a [u8]),
+}
+
 pub(crate) struct PositioningData<'a> {
     pub origin: Origin3d,
     pub layout_after: TexelCopyBufferLayout,
     pub dimensions_after: Extent3d,
-    pub data: &'a [u8],
+    pub data: DmaOrCpuMemory<'a>,
     // range: RangeFrom<usize>,
 }
 
@@ -106,6 +98,13 @@ pub(crate) fn write_image_to_texture(
 ) {
     let positoning = position_image(&img, (position.0, position.1), (tex.width(), tex.height()));
 
+    let data = match img.data {
+        DmaOrCpuMemory::Dma => {
+            return;
+        }
+        DmaOrCpuMemory::Cpu(items) => items,
+    };
+
     state.queue.write_texture(
         TexelCopyTextureInfo {
             texture: &tex,
@@ -113,7 +112,7 @@ pub(crate) fn write_image_to_texture(
             origin: positoning.origin,
             aspect: wgpu::TextureAspect::All,
         },
-        &positoning.data,
+        &data,
         positoning.layout_after,
         positoning.dimensions_after,
     );
@@ -191,11 +190,16 @@ pub(crate) fn position_image<'a, 'b>(
     let skip_rows: usize = skip_rows as usize;
     let bytes_per_row = overlay.layout.bytes_per_row.unwrap() as usize;
 
+    let data = match &overlay.data {
+        DmaOrCpuMemory::Dma => DmaOrCpuMemory::Dma,
+        DmaOrCpuMemory::Cpu(items) => DmaOrCpuMemory::Cpu(&items[skip_rows * bytes_per_row..]),
+    };
+
     let temp = PositioningData {
         origin: pos,
         layout_after: layout,
         dimensions_after: item_dimensions,
-        data: &overlay.data[skip_rows * bytes_per_row..],
+        data: data,
     };
 
     temp

@@ -15,6 +15,7 @@ use crate::gpu_mirror_display::render::on_redraw;
 use crate::gpu_mirror_display::state::{
     AdditionalRenderingState, COMPLETE_RESIZE_ON_NEW_SETTINGS_AFTER, DmaStartupChecks, State,
 };
+use crate::gpu_mirror_display::utility_texture::DmaOrCpuMemory;
 use crate::gpu_mirror_display::utility_vertex::{VERTICES, Vertex};
 use crate::gpu_mirror_display::{binary_images, shutdown};
 use crate::ui_state::{
@@ -521,6 +522,12 @@ impl ApplicationHandler<()> for State3 {
             None,
         );
 
+        let DmaOrCpuMemory::Cpu(icon_select_screen_area_data) =
+            &binary_images::ICON_SELECT_SCREEN_AREA.data
+        else {
+            unreachable!("Not possible");
+        };
+
         queue.write_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &overlay_text,
@@ -528,7 +535,7 @@ impl ApplicationHandler<()> for State3 {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            &binary_images::ICON_SELECT_SCREEN_AREA.data,
+            icon_select_screen_area_data,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(4 * 500),
