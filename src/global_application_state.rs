@@ -5,12 +5,14 @@ use std::{
     time::SystemTime,
 };
 
+use crate::gpu_mirror_display::defaults::PRESENT_PREFERENCES;
+
 pub static FRAME_TRANSFER: LazyLock<Mutex<Option<Arc<LastReported>>>> =
     LazyLock::new(|| Mutex::new(None));
 
 pub const SAFE_MODE: &'static str = "SAFE_MODE";
 
-pub const VERSION: &'static str = "0.0.4";
+pub const VERSION: &'static str = "0.0.5";
 
 pub static FOUND_VERSION: LazyLock<String> = LazyLock::new(|| {
     if let Ok(v) = reqwest::blocking::get("https://fracture.systems/fracture/VERSION") {
@@ -35,6 +37,9 @@ pub static DESKTOP_ENV_IS_GNOME: LazyLock<bool> =
         },
         None => false,
     });
+
+pub static AVAILABLE_PRESETS: LazyLock<Mutex<Vec<wgpu::PresentMode>>> =
+    LazyLock::new(|| Mutex::new(PRESENT_PREFERENCES.to_vec()));
 
 /*
 

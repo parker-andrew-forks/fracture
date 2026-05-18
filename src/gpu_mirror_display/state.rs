@@ -3,17 +3,16 @@ use super::{
 };
 use crate::{
     application_channel_creator::GpuChannelSide,
-    gpu_mirror_display::event_loop::WrappedBridge,
+    gpu_mirror_display::{event_loop::WrappedBridge, pipeline_definitions::SelectedGpuCaps},
     gtk_user_interfaces::settings_ui::SETTINGS_IS_RUNNING,
     stream_creation::utility_gnome_video_frame::PredictedWgpuFrameFormat,
     ui_state::{GreenScreen, TitleBarDisplay, UiState, VideoAspect, WindowBehaviour},
 };
 use std::{
-    sync::mpsc::SendError,
+    sync::{Arc, mpsc::SendError},
     time::{Duration, SystemTime},
 };
-use tokio::runtime::Runtime;
-use wgpu::PipelineLayout;
+use wgpu::{PipelineLayout, PresentMode};
 use winit::{dpi::PhysicalSize, window::Window};
 
 #[derive(Debug, Clone)]
@@ -27,56 +26,206 @@ pub struct DmaStartupChecks {
     pub fail_at: u32,
 }
 
-pub struct State {
-    pub surface: wgpu::Surface<'static>,
+/// **Not used yet**
+pub struct SettingsGtk;
+
+pub struct UserInteractionState {
+    pub mouse_clicks: Vec<((u32, u32), SystemTime)>,
+    pub mouse_downs: Vec<((u32, u32), SystemTime)>,
+    pub mouse_over_screen: bool,
+    pub mouse_is_down: bool,
+    pub mouse_select_start: (u32, u32),
+    pub mouse_resize_state: ResizeInteractionsState,
+}
+
+pub struct UiRendering {
+    pub ui_rendering_pipeline: wgpu::RenderPipeline,
+    pub vertex_buffer2: wgpu::Buffer,
+}
+
+pub struct MirrorRendering {
+    pub pipeline_layout: Option<PipelineLayout>,
+    pub mirror_output_rendering_pipeline: wgpu::RenderPipeline,
+    pub vertex_buffer: wgpu::Buffer,
+    pub mirror_fractured_texture: wgpu::Texture,
+}
+
+pub struct SharedRender {
+    pub index_buffer: wgpu::Buffer,
+    pub bindings: wgpu::BindGroup,
+    pub used_video_format: PredictedWgpuFrameFormat,
+    pub wrapping_render_count: u32,
+    pub available_presents: Vec<PresentMode>,
+    pub default_selected_capabilities: SelectedGpuCaps,
+    pub diffuse_sampler: Option<wgpu::Sampler>,
+    pub ui_flags: Option<wgpu::Buffer>,
+    pub texture_bind_group_layout: Option<wgpu::BindGroupLayout>,
+}
+
+pub struct DetectedCapabilities {
+    pub available_presents: Vec<PresentMode>,
+    pub default_selected_capabilities: SelectedGpuCaps,
+}
+
+pub struct MirrorRenderer {
+    pub ui_rendering: UiRendering,
+    pub mirror_rendering: MirrorRendering,
+    pub shared_rendering: SharedRender,
+}
+
+pub struct Mirror {
+    pub render: MirrorRenderer,
+}
+
+pub struct WgpuContainer {
+    pub bridge: WrappedBridge,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub config: wgpu::SurfaceConfiguration,
-    pub size: winit::dpi::PhysicalSize<u32>,
+    pub surface: wgpu::Surface<'static>,
+}
+pub struct AppSystems {
+    pub wgpu: WgpuContainer,
     pub window: std::sync::Arc<Window>,
-    pub mirror_output_rendering_pipeline: wgpu::RenderPipeline,
-    pub mirror_fractured_texture: wgpu::Texture,
-    pub ui_rendering_pipeline: wgpu::RenderPipeline,
-    pub vertex_buffer: wgpu::Buffer,
-    pub vertex_buffer2: wgpu::Buffer,
-    pub index_buffer: wgpu::Buffer,
-    pub num_indices: u32,
-    pub diffuse_bind_group: wgpu::BindGroup,
-    pub used_video_format: PredictedWgpuFrameFormat,
-    pub wrapping_render_count: u32,
-    pub bridge: WrappedBridge,
+    pub async_rt: Option<tokio::runtime::Runtime>,
+}
+
+/// **Not used yet**
+pub struct PipewireController;
+
+pub struct ExternalControl {
+    pub channels: Arc<GpuChannelSide>,
+    pub settings_ui: SettingsGtk,
+    /// **Not used yet**
+    pub pipewire: PipewireController,
+}
+
+pub struct InitState {
+    pub dma_startup_checks: DmaStartupChecks,
     pub first_dma_sent: bool,
-    /// Sometimes, I'm writing pixels directly to a texture that will always be the same size as the window.
-    ///
-    /// Then, sometimes, I'm writing pixels to a texture that will be transformed into the size of the window.
-    ///
-    /// This origin is from that texture.
+}
+
+pub struct PreviousIteration {
     pub last_fracture_display_origin: wgpu::Origin3d,
     pub last_fracture_dimensions: wgpu::Extent3d,
     pub last_reported_offsets: (u32, u32),
-
-    pub dma_startup_checks: DmaStartupChecks,
-
-    pub diffuse_sampler: Option<wgpu::Sampler>,
-    pub rt: Option<Runtime>,
-    pub pipeline_layout: Option<PipelineLayout>,
-    pub ui_flags: Option<wgpu::Buffer>,
-    pub texture_bind_group_layout: Option<wgpu::BindGroupLayout>,
-
-    pub should_shutdown: bool,
+    pub last_surface_size: PhysicalSize<u32>,
+    pub last_frame_size: (u32, u32),
+    pub last_known_mouse_position: (u32, u32),
 }
 
-impl State {
-    pub fn window(&self) -> &Window {
-        &self.window
+pub struct IntricateState {
+    pub crop_button_pressed: bool,
+    pub in_crop_selection: bool,
+    pub keep_borders: bool,
+    pub resize_countdown_from_new_settings: i32,
+    pub resize_countdown_started: bool,
+    pub should_shutdown: bool,
+    pub active_present: PresentMode,
+    pub new_settings: bool,
+}
+pub struct AppState {
+    pub cropped: Option<CroppedArea>,
+    pub initialization_checks: InitState,
+    pub last_iteration: PreviousIteration,
+    pub intricate_todo_refactor: IntricateState,
+    /// **Not used yet**
+    pub current_activity: EnumeratedState,
+}
+
+pub struct Application {
+    pub app_state: AppState,
+    pub user_interaction: UserInteractionState,
+    pub mirror: Mirror,
+    pub configuration: UiState,
+    pub systems: AppSystems,
+    pub external: ExternalControl,
+}
+
+/// **Not used yet**
+pub struct SelectStart {
+    pub x: u32,
+    pub y: u32,
+}
+
+/// **Not used yet**
+pub enum EnumeratedState {
+    WaitingForSelection,
+    InSelection(SelectStart),
+    UsingSelection(CroppedArea),
+}
+
+impl SettingsGtk {
+    /// Even when reporting Ok(()), it can seem like it failed if it immediately opens again.
+    pub fn gtk_shutdown_signal(&self, app: &Application) -> Result<(), ShutdownSettingsErr> {
+        let before = app.configuration.clone();
+
+        let res = app.external.channels.gpu_sender_request.send(before);
+
+        if let Err(e) = res {
+            return Err(ShutdownSettingsErr::SendStateErr(e));
+        }
+
+        let res = app.external.channels.kill_gtk.send(());
+
+        if let Err(e) = res {
+            return Err(ShutdownSettingsErr::SendKillErr(e));
+        }
+
+        Ok(())
     }
 
-    pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
+    pub fn gtk_shutdown_signal_checked(
+        &self,
+        app: &Application,
+    ) -> Result<(), ShutdownSettingsErr> {
+        let is_active = { *SETTINGS_IS_RUNNING.lock().unwrap() };
+
+        if is_active {
+            self.gtk_shutdown_signal(app)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Even when reporting Ok(()), it can seem like it failed if it immediately closes again
+    pub fn gtk_open_signal(&self, app: &Application) -> Result<(), OpenSettingsErr> {
+        let before = app.configuration.clone();
+
+        if let Err(e) = app.external.channels.gpu_sender_request.send(before) {
+            return Err(OpenSettingsErr::FailedToUpdateState(e));
+        }
+
+        // This is just suggestive. It doesn't hold the lock. It can shutdown before
+        // the shutdown call is made or start before the start is called.
+        let is_active = { *SETTINGS_IS_RUNNING.lock().unwrap() };
+
+        if is_active {
+            match self.gtk_shutdown_signal(app) {
+                Err(e) => {
+                    return Err(OpenSettingsErr::ThreadPredictedTerminated(e));
+                }
+                _ => {}
+            }
+        }
+
+        let res = app.external.channels.start_settings_ui.send(());
+
+        if let Err(e) = res {
+            return Err(OpenSettingsErr::FailedToSendStartSignal(e));
+        }
+
+        Ok(())
+    }
+}
+
+impl MirrorRenderer {
+    pub fn resize(&self, wgpu: &mut WgpuContainer, new_size: winit::dpi::PhysicalSize<u32>) {
         if new_size.width > 0 && new_size.height > 0 {
-            self.size = new_size;
-            self.config.width = new_size.width;
-            self.config.height = new_size.height;
-            self.surface.configure(&self.device, &self.config);
+            wgpu.config.width = new_size.width;
+            wgpu.config.height = new_size.height;
+
+            wgpu.surface.configure(&wgpu.device, &wgpu.config);
 
             // This is a hack.
             //
@@ -97,142 +246,65 @@ impl State {
             std::thread::sleep(Duration::from_millis(10));
         }
     }
-}
 
-pub const COMPLETE_RESIZE_ON_NEW_SETTINGS_AFTER: i32 = 60;
-
-pub struct AdditionalRenderingState {
-    pub mouse_clicks: Vec<((u32, u32), SystemTime)>,
-    pub mouse_downs: Vec<((u32, u32), SystemTime)>,
-    pub new_settings: bool,
-    pub last_surface_size: PhysicalSize<u32>,
-    pub last_frame_size: (u32, u32),
-    pub mouse_over_screen: bool,
-    pub mouse_is_down: bool,
-    pub mouse_select_start: (u32, u32),
-    pub in_crop_selection: bool,
-    pub cropped: Option<CroppedArea>,
-    pub crop_button_pressed: bool,
-    pub last_known_mouse_position: (u32, u32),
-    pub settings_state: UiState,
-    pub channels: std::sync::Arc<GpuChannelSide>,
-    pub mouse_resize_state: ResizeInteractionsState,
-    pub keep_borders: bool,
-
-    pub resize_countdown_from_new_settings: i32,
-    pub resize_countdown_started: bool,
-}
-
-impl AdditionalRenderingState {
-    pub fn should_render_ui(&self) -> bool {
-        if self.mouse_over_screen || self.mouse_resize_state != ResizeInteractionsState::None {
+    pub fn should_render_ui(&self, app: &Application) -> bool {
+        if app.user_interaction.mouse_over_screen
+            || app.user_interaction.mouse_resize_state != ResizeInteractionsState::None
+            || app.app_state.intricate_todo_refactor.in_crop_selection
+            || app.app_state.intricate_todo_refactor.crop_button_pressed
+        {
             true
         } else {
             false
         }
     }
+}
 
+impl Application {
     pub fn get_active_ui_flags(&self) -> Vec<UiFlag> {
         let mut active_ui_flags = vec![];
 
-        let additional_state = self;
-
         {
-            if TitleBarDisplay::HiddenTitleBar == additional_state.settings_state.display_title {
+            if TitleBarDisplay::HiddenTitleBar == self.configuration.display_title {
                 active_ui_flags.push(UiFlag::DisplayOverlays);
             }
 
-            if additional_state.mouse_over_screen {
+            if self.user_interaction.mouse_over_screen {
                 active_ui_flags.push(UiFlag::MouseOverWindow);
             }
 
-            if additional_state.mouse_is_down {
+            if self.user_interaction.mouse_is_down {
                 active_ui_flags.push(UiFlag::MouseDown);
             }
 
-            if additional_state.in_crop_selection || additional_state.crop_button_pressed {
+            if self.app_state.intricate_todo_refactor.in_crop_selection
+                || self.app_state.intricate_todo_refactor.crop_button_pressed
+            {
                 active_ui_flags.push(UiFlag::WaitingForCrop);
             }
 
             if let VideoAspect::MaintainAspectRatio(_, WindowBehaviour::SizeMatchesMirrorAspect) =
-                additional_state.settings_state.aspect_ratio
+                self.configuration.aspect_ratio
             {
                 active_ui_flags.push(UiFlag::OnlyAngles);
             }
 
-            if additional_state.mouse_resize_state != ResizeInteractionsState::None
-                && additional_state.keep_borders
+            if self.user_interaction.mouse_resize_state != ResizeInteractionsState::None
+                && self.app_state.intricate_todo_refactor.keep_borders
             {
                 active_ui_flags.push(UiFlag::KeepBorders);
             }
 
-            if let GreenScreen::Color(_) = additional_state.settings_state.green_screen {
+            if let GreenScreen::Color(_) = self.configuration.green_screen {
                 active_ui_flags.push(UiFlag::UseGreenScreen);
             }
         }
 
         active_ui_flags
     }
-
-    /// Even when reporting Ok(()), it can seem like it failed if it immediately closes again
-    pub fn gtk_open_signal(&self) -> Result<(), OpenSettingsErr> {
-        let before = self.settings_state.clone();
-
-        if let Err(e) = self.channels.gpu_sender_request.send(before) {
-            return Err(OpenSettingsErr::FailedToUpdateState(e));
-        }
-
-        // This is just suggestive. It doesn't hold the lock. It can shutdown before
-        // the shutdown call is made or start before the start is called.
-        let is_active = { *SETTINGS_IS_RUNNING.lock().unwrap() };
-
-        if is_active {
-            match self.gtk_shutdown_signal() {
-                Err(e) => {
-                    return Err(OpenSettingsErr::ThreadPredictedTerminated(e));
-                }
-                _ => {}
-            }
-        }
-
-        let res = self.channels.start_settings_ui.send(());
-
-        if let Err(e) = res {
-            return Err(OpenSettingsErr::FailedToSendStartSignal(e));
-        }
-
-        Ok(())
-    }
-
-    pub fn gtk_shutdown_signal_checked(&self) -> Result<(), ShutdownSettingsErr> {
-        let is_active = { *SETTINGS_IS_RUNNING.lock().unwrap() };
-
-        if is_active {
-            self.gtk_shutdown_signal()
-        } else {
-            Ok(())
-        }
-    }
-
-    /// Even when reporting Ok(()), it can seem like it failed if it immediately opens again.
-    pub fn gtk_shutdown_signal(&self) -> Result<(), ShutdownSettingsErr> {
-        let before = self.settings_state.clone();
-
-        let res = self.channels.gpu_sender_request.send(before);
-
-        if let Err(e) = res {
-            return Err(ShutdownSettingsErr::SendStateErr(e));
-        }
-
-        let res = self.channels.kill_gtk.send(());
-
-        if let Err(e) = res {
-            return Err(ShutdownSettingsErr::SendKillErr(e));
-        }
-
-        Ok(())
-    }
 }
+
+pub const COMPLETE_RESIZE_ON_NEW_SETTINGS_AFTER: i32 = 60;
 
 #[derive(Debug)]
 pub enum OpenSettingsErr {
