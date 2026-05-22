@@ -67,7 +67,6 @@ var<uniform> flags: UiRenderData;
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    var cut_color = vec4(1.0, 1.0, 1.0, 1.0);
     var color = vec4(0.0, 0.0, 0.0, 0.0);
 
     color.a = color.a - (1.0 - flags.transparency);
@@ -174,7 +173,25 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
         
         if u32(in.clip_position.x) >= u32(sub_x) && u32(in.clip_position.x) <= max_x + 5 && u32(in.clip_position.y) >= u32(sub_y) && u32(in.clip_position.y) <= max_y + 5 {
-            color = cut_color;
+            var mirror = textureSample(t_diffuse, s_diffuse, in.tex_coords);
+
+            var m_red = 1.0;
+            var m_green = 1.0;
+            var m_blue = 1.0;
+
+            if mirror.r > 0.5 {
+                m_red = 0.0;
+            }
+            
+            if mirror.b > 0.5 {
+                m_blue = 0.0;
+            }
+            
+            if mirror.g > 0.5 {
+                m_green = 0.0;
+            }
+
+            color = vec4(m_red, m_green, m_blue, 1.0);
 
             in_cut_region = true;
         }
@@ -239,6 +256,39 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
 
     if (flags.flagged & WaitingForCrop) != 0 && !in_cut_region {
+   
+            let x = in.tex_coords.x;
+            let y = in.tex_coords.y;
+
+            let zx = u32(f32(flags.surface_width) * x);
+            let zy = u32(f32(flags.surface_height) * y);
+
+            if (zx == flags.mouse_x || zy == flags.mouse_y) && (flags.flagged & MouseDown) == 0  {
+
+                var mirror = textureSample(t_diffuse, s_diffuse, in.tex_coords);
+
+                var m_red = 1.0;
+                var m_green = 1.0;
+                var m_blue = 1.0;
+
+                if mirror.r > 0.5 {
+                    m_red = 0.0;
+                }
+                
+                if mirror.b > 0.5 {
+                    m_blue = 0.0;
+                }
+                
+                if mirror.g > 0.5 {
+                    m_green = 0.0;
+                }
+
+
+                color = vec4(m_red, m_green, m_blue, 1.0);
+            }
+
+
+
         var color2: vec4<f32> = textureSample(overlay, s_diffuse, in.tex_coords);
 
         if color2.r != 0.0 || color2.g != 0.0 || color2.b != 0.0 {

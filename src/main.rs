@@ -63,6 +63,23 @@ fn main() {
         }
     }
 
+    // I think Vulkan might be unstable for GTK, so I'm disabling it to see if it improves stability.
+    //
+    // "Currently, the GTK Vulkan backend doesn't do any error handling.
+    //  Every error is considered fatal. So it's expected that it crashes."
+    //
+    // https://gitlab.gnome.org/GNOME/gtk/-/work_items/7909
+    {
+        unsafe {
+            env::set_var("GDK_DISABLE", "vulkan");
+
+            // I'm just going to set the renderer to software based cairo because
+            // it seems even more stable, and that's all I care about for GTK. I'm
+            // not using GTK to render anything, it doesn't need to be complicated.
+            env::set_var("GSK_RENDERER", "cairo");
+        }
+    }
+
     let (gpu, ui, dbus) = ApplicationChannelsCreator::channels();
     let (send_init_complete, init_complete) = std::sync::mpsc::channel::<()>();
 
