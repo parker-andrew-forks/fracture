@@ -1,3 +1,5 @@
+use std::time::SystemTime;
+
 use crate::{
     global_application_state::AVAILABLE_PRESETS,
     gpu_mirror_display::{defaults::CROP_COLOR, postprocessing_shaders::PostprocessingErrors},
@@ -5,7 +7,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use wgpu::PresentMode;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum VideoLocation {
     NorthWest = 0,
     North = 1,
@@ -35,7 +37,7 @@ impl Into<VideoLocation> for i32 {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum WindowBackground {
     Transparent,
     Color(f32, f32, f32, f32),
@@ -47,7 +49,7 @@ impl Default for WindowBackground {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum WindowBehaviour {
     SizeMatchesMirrorAspect,
     SizeSetByUser(VideoLocation),
@@ -59,7 +61,7 @@ impl Default for WindowBehaviour {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 
 pub enum ScaleDecision {
     DontScale,
@@ -72,7 +74,7 @@ impl Default for ScaleDecision {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum VideoAspect {
     MaintainAspectRatio(ScaleDecision, WindowBehaviour),
     DoNotMaintainAspect,
@@ -116,10 +118,16 @@ pub struct AdjCopy {
     pub page_size: f64,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum WindowInteractions {
     Interactable,
     PassThrough,
+}
+
+pub struct AppConfiguration {
+    pub active: UiState,
+    pub saved: CreateUiState,
+    pub profiles: LoadedProfiles,
 }
 
 #[derive(Clone, Debug)]
@@ -141,6 +149,9 @@ pub struct UiState {
     pub window_interactions: WindowInteractions,
     pub preset: wgpu::PresentMode,
     pub should_define_new_preset: bool,
+    pub active_profile: usize,
+    pub reload_profiles: bool,
+    pub delayed_uptime_timer: Option<SystemTime>,
 }
 
 impl UiState {
@@ -191,6 +202,14 @@ pub struct SetUiState {
     pub minify_filter: wgpu::FilterMode,
     pub window_interactions: WindowInteractions,
     pub present: PresentMode,
+}
+
+impl Default for SetUiState {
+    fn default() -> Self {
+        let temp = CreateUiState::default();
+        let temp: UiState = temp.into();
+        temp.lossy_into_set_ui()
+    }
 }
 
 impl SetUiState {
@@ -244,6 +263,9 @@ impl SetUiState {
             window_interactions,
             preset: selected_preset,
             should_define_new_preset: true,
+            active_profile: 0,
+            reload_profiles: true,
+            delayed_uptime_timer: None,
         };
 
         if let Some(postprocessor) = &mut temp.postprocessor {
@@ -267,7 +289,7 @@ pub const DEFAULT_MINIFY_FILTER: wgpu::FilterMode = wgpu::FilterMode::Linear;
 impl Default for UiState {
     fn default() -> Self {
         Self {
-            display_title: TitleBarDisplay::TitleBarVisible,
+            display_title: TitleBarDisplay::HiddenTitleBar,
             aspect_ratio: VideoAspect::MaintainAspectRatio(
                 ScaleDecision::Scale,
                 WindowBehaviour::SizeMatchesMirrorAspect,
@@ -287,19 +309,30 @@ impl Default for UiState {
             window_interactions: WindowInteractions::Interactable,
             preset: *&AVAILABLE_PRESETS.lock().unwrap()[0].clone(),
             should_define_new_preset: true,
+            active_profile: 0,
+            reload_profiles: true,
+            delayed_uptime_timer: None,
         }
     }
 }
 
 impl UiState {
-    pub fn update(&mut self) -> &mut Self {
-        self.need_rebuild = true;
-        self.update_no_rebuild()
+    fn on_all_changes(&mut self) -> &mut Self {
+        self.updated = true;
+
+        self
     }
 
-    pub fn update_no_rebuild(&mut self) -> &mut Self {
-        self.updated = true;
-        self
+    pub fn update(&mut self) -> &mut Self {
+        self.need_rebuild = true;
+
+        self.on_all_changes()
+    }
+
+    pub fn update_delayed_rebuild(&mut self) -> &mut Self {
+        self.delayed_uptime_timer = Some(SystemTime::now());
+
+        self.on_all_changes()
     }
 }
 
@@ -307,18 +340,18 @@ impl UiState {
 ///
 /// Using this is just about perfection in defining a version. The other has debug fields
 /// related to the UI. This one is for programmatically using with an IDE
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct CreateUiState {
-    pub display_title: TitleBarDisplay,
-    pub aspect_ratio: VideoAspect,
-    pub frame_transparency: f32,
-    pub green_screen: GreenScreen,
-    pub window_background: WindowBackground,
+    pub display_title: Option<TitleBarDisplay>,
+    pub aspect_ratio: Option<VideoAspect>,
+    pub frame_transparency: Option<f32>,
+    pub green_screen: Option<GreenScreen>,
+    pub window_background: Option<WindowBackground>,
     pub postprocessor: Option<String>,
-    pub magnify_filter: wgpu::FilterMode,
-    pub minify_filter: wgpu::FilterMode,
-    pub window_interactions: WindowInteractions,
-    pub preset: PresentMode,
+    pub magnify_filter: Option<wgpu::FilterMode>,
+    pub minify_filter: Option<wgpu::FilterMode>,
+    pub window_interactions: Option<WindowInteractions>,
+    pub present: Option<PresentMode>,
 }
 
 impl Default for CreateUiState {
@@ -341,21 +374,24 @@ impl Default for CreateUiState {
             should_define_new_primary_sampler: _,
             preset: presets,
             should_define_new_preset: _,
+            active_profile: _,
+            reload_profiles: _,
+            delayed_uptime_timer: _,
         } = UiState::default();
 
         Self {
-            display_title,
-            aspect_ratio,
-            frame_transparency,
-            green_screen,
-            window_background: background,
+            display_title: Some(display_title),
+            aspect_ratio: Some(aspect_ratio),
+            frame_transparency: Some(frame_transparency),
+            green_screen: Some(green_screen),
+            window_background: Some(background),
             postprocessor: postprocessor
                 .map(|v| v.submitted_postprocessor)
                 .unwrap_or(None),
-            magnify_filter,
-            minify_filter,
-            window_interactions: window_interactions,
-            preset: presets,
+            magnify_filter: Some(magnify_filter),
+            minify_filter: Some(minify_filter),
+            window_interactions: Some(window_interactions),
+            present: Some(presets),
         }
     }
 }
@@ -372,24 +408,25 @@ impl Into<SetUiState> for CreateUiState {
             magnify_filter,
             minify_filter,
             window_interactions,
-            preset: presets,
+            present: presets,
         } = self;
 
         SetUiState {
-            display_title,
-            aspect_ratio,
-            frame_transparency,
-            green_screen,
-            window_background,
+            display_title: display_title.unwrap_or(UiState::default().display_title),
+            aspect_ratio: aspect_ratio.unwrap_or(UiState::default().aspect_ratio),
+            frame_transparency: frame_transparency.unwrap_or(UiState::default().frame_transparency),
+            green_screen: green_screen.unwrap_or(UiState::default().green_screen),
+            window_background: window_background.unwrap_or(UiState::default().background),
             postprocessor: postprocessor.map(|v| Postprocessor {
                 submitted_postprocessor: Some(v.clone()),
                 editing_postprocessor: v.clone(),
                 last_errors: None,
             }),
-            magnify_filter,
-            minify_filter,
-            window_interactions: window_interactions,
-            present: presets,
+            magnify_filter: magnify_filter.unwrap_or(UiState::default().magnify_filter),
+            minify_filter: minify_filter.unwrap_or(UiState::default().minify_filter),
+            window_interactions: window_interactions
+                .unwrap_or(UiState::default().window_interactions),
+            present: presets.unwrap_or(UiState::default().preset),
         }
     }
 }
@@ -402,8 +439,77 @@ impl Into<UiState> for CreateUiState {
     }
 }
 
+impl Into<CreateUiState> for SetUiState {
+    fn into(self) -> CreateUiState {
+        let temp: SetUiState = self;
+
+        CreateUiState {
+            display_title: Some(temp.display_title),
+            aspect_ratio: Some(temp.aspect_ratio),
+            frame_transparency: Some(temp.frame_transparency),
+            green_screen: Some(temp.green_screen),
+            window_background: Some(temp.window_background),
+            postprocessor: temp
+                .postprocessor
+                .map(|v| v.submitted_postprocessor)
+                .unwrap_or(None),
+            magnify_filter: Some(temp.magnify_filter),
+            minify_filter: Some(temp.minify_filter),
+            window_interactions: Some(temp.window_interactions),
+            present: Some(temp.present),
+        }
+    }
+}
+
 impl Into<UiState> for SetUiState {
     fn into(self) -> UiState {
         self.build_new_full_settings_state()
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoadedProfiles {
+    pub profiles: Vec<Profile>,
+}
+
+impl Default for LoadedProfiles {
+    fn default() -> Self {
+        Self {
+            profiles: vec![Profile::default()],
+        }
+    }
+}
+
+impl LoadedProfiles {
+    pub fn user_default(&self) -> Profile {
+        self.profiles[0].clone()
+    }
+
+    pub fn list(&self) -> &Vec<Profile> {
+        &self.profiles
+    }
+
+    /// Returns the value at a specified index. This wraps the index if it is larger than the list.
+    pub fn get(&self, idx: usize) -> &Profile {
+        &self.profiles[idx % self.profiles.len()]
+    }
+}
+
+impl Default for Profile {
+    fn default() -> Self {
+        let cfg: CreateUiState = Default::default();
+
+        // cfg.present = None;
+
+        Self {
+            name: Some("New Profile".into()),
+            config: cfg,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Profile {
+    pub name: Option<String>,
+    pub config: CreateUiState,
 }

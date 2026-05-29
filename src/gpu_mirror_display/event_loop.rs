@@ -1,6 +1,6 @@
 use crate::application_channel_creator::GpuChannelSide;
-use crate::global_application_state::{AVAILABLE_PRESETS, SAFE_MODE};
-use crate::gpu_mirror_display::defaults::{APPLICATION_NAME, CROP_COLOR, PRESENT_PREFERENCES};
+use crate::global_application_state::{AVAILABLE_PRESETS, FPS_TRACKING, SAFE_MODE, load_profiles};
+use crate::gpu_mirror_display::defaults::{APPLICATION_NAME, PRESENT_PREFERENCES};
 use crate::gpu_mirror_display::input::events_mouse::ResizeInteractionsState;
 use crate::gpu_mirror_display::input::on_input_events;
 use crate::gpu_mirror_display::input::utility_mouse::remove_expired_mouse_events;
@@ -13,22 +13,24 @@ use crate::gpu_mirror_display::postprocessing_shaders::{
 };
 use crate::gpu_mirror_display::render::on_redraw;
 use crate::gpu_mirror_display::state::{
-    AppState, AppSystems, Application, COMPLETE_RESIZE_ON_NEW_SETTINGS_AFTER, DmaStartupChecks,
-    EnumeratedState, ExternalControl, InitState, IntricateState, Mirror, MirrorRenderer,
-    MirrorRendering, PipewireController, PreviousIteration, SettingsGtk, SharedRender, UiRendering,
-    UserInteractionState, WgpuContainer,
+    AppState, AppStatistics, AppSystems, Application, COMPLETE_RESIZE_ON_NEW_SETTINGS_AFTER,
+    DmaStartupChecks, EnumeratedState, ExternalControl, FpsTracker, FpsTrackerOrigin, InitState,
+    IntricateState, Mirror, MirrorRenderer, MirrorRendering, PipewireController, PreviousIteration,
+    SettingsGtk, SharedRender, UiRendering, UserInteractionState, WgpuContainer,
 };
 use crate::gpu_mirror_display::utility_texture::DmaOrCpuMemory;
 use crate::gpu_mirror_display::utility_vertex::{VERTICES, Vertex};
+use crate::gpu_mirror_display::window_cropping::start_crop_selection;
 use crate::gpu_mirror_display::{binary_images, shutdown};
 use crate::ui_state::{
-    DEFAULT_MAGNIFY_FILTER, DEFAULT_MINIFY_FILTER, GreenScreen, ScaleDecision, TitleBarDisplay,
-    UiState, VideoAspect, VideoLocation, WindowBackground, WindowBehaviour,
+    AppConfiguration, DEFAULT_MAGNIFY_FILTER, DEFAULT_MINIFY_FILTER, TitleBarDisplay,
+    WindowInteractions,
 };
 use lamco_wgpu::SupportedFormat;
-use std::mem;
 use std::num::NonZero;
 use std::sync::Arc;
+use std::time::Duration;
+use std::{env, mem};
 use wgpu::util::DeviceExt;
 use wgpu::{BufferDescriptor, BufferUsages, Extent3d, Surface};
 use winit::application::ApplicationHandler;
@@ -543,6 +545,14 @@ impl ApplicationHandler<()> for WinitHandler {
 
         let sel = selected_surface_capabilities.present.clone();
 
+        let profiles = load_profiles().unwrap_or(Default::default());
+        let mut saved = profiles.user_default();
+
+        // The user can have pass through interactions in their profiles, but the application
+        // always converts the startup to interactable to prevent the user from creating
+        // a situation where they are stuck.
+        saved.config.window_interactions = Some(WindowInteractions::Interactable);
+
         let mut app = Application {
             app_state: AppState {
                 cropped: None,
@@ -558,6 +568,10 @@ impl ApplicationHandler<()> for WinitHandler {
                         dma_error_count: 0,
                     },
                     first_dma_sent: false,
+                    track_fps: match env::var(FPS_TRACKING) {
+                        Ok(_) => true,
+                        Err(_) => false,
+                    },
                 },
                 last_iteration: PreviousIteration {
                     last_fracture_display_origin: Default::default(),
@@ -625,24 +639,10 @@ impl ApplicationHandler<()> for WinitHandler {
                     },
                 },
             },
-            configuration: UiState {
-                display_title: TitleBarDisplay::TitleBarVisible,
-                aspect_ratio: VideoAspect::MaintainAspectRatio(
-                    ScaleDecision::DontScale,
-                    WindowBehaviour::SizeSetByUser(VideoLocation::Center),
-                ),
-                frame_transparency: 100.0,
-                need_rebuild: true,
-                updated: true,
-                green_screen: GreenScreen::None,
-                postprocessor: Default::default(),
-                background: WindowBackground::Color(
-                    CROP_COLOR.0,
-                    CROP_COLOR.1,
-                    CROP_COLOR.2,
-                    CROP_COLOR.3,
-                ),
-                ..Default::default()
+            configuration: AppConfiguration {
+                active: saved.config.clone().into(),
+                saved: saved.config,
+                profiles: profiles,
             },
             systems: AppSystems {
                 wgpu: WgpuContainer {
@@ -660,18 +660,32 @@ impl ApplicationHandler<()> for WinitHandler {
                 pipewire: PipewireController,
                 channels: Arc::new(channels),
             },
+            metrics: AppStatistics {
+                fps_tracking: FpsTracker::new(
+                    Some(FpsTrackerOrigin::WebGpu),
+                    Some(vec![
+                        Duration::from_secs(1),
+                        Duration::from_secs(15),
+                        Duration::from_secs(60),
+                        Duration::from_secs(60 * 5),
+                        Duration::from_secs(60 * 15),
+                        Duration::from_secs(60 * 60),
+                    ]),
+                ),
+            },
         };
 
         app.external
             .channels
             .gpu_sender_request
-            .send(app.configuration.clone())
+            .send(app.configuration.active.clone())
             .unwrap();
 
         app.mirror
             .render
             .resize(&mut app.systems.wgpu, window.as_ref().unwrap().inner_size());
 
+        start_crop_selection(&mut app);
         on_redraw(&mut app);
 
         self.app = Some(app);
@@ -729,25 +743,33 @@ impl ApplicationHandler<()> for WinitHandler {
                     .resize_countdown_started = true;
             }
 
-            app.configuration = new;
+            app.configuration.active = new;
             app.app_state.intricate_todo_refactor.new_settings = true;
 
             let mut should_update = false;
 
-            if app.configuration.should_define_new_primary_sampler {
-                app.mirror.render.shared_rendering.diffuse_sampler = Some(define_primary_sampler(
-                    &app.systems.wgpu.device,
-                    app.configuration.magnify_filter,
-                    app.configuration.minify_filter,
-                ));
+            if app.configuration.active.reload_profiles {
+                app.configuration.profiles = load_profiles().unwrap_or(Default::default());
 
-                app.configuration.should_define_new_primary_sampler = false;
+                app.configuration.active.reload_profiles = false;
 
                 should_update = true;
             }
 
-            if app.configuration.should_define_new_preset {
-                let pre = app.configuration.preset.clone();
+            if app.configuration.active.should_define_new_primary_sampler {
+                app.mirror.render.shared_rendering.diffuse_sampler = Some(define_primary_sampler(
+                    &app.systems.wgpu.device,
+                    app.configuration.active.magnify_filter,
+                    app.configuration.active.minify_filter,
+                ));
+
+                app.configuration.active.should_define_new_primary_sampler = false;
+
+                should_update = true;
+            }
+
+            if app.configuration.active.should_define_new_preset {
+                let pre = app.configuration.active.preset.clone();
 
                 let cfg = match app
                     .mirror
@@ -793,7 +815,7 @@ impl ApplicationHandler<()> for WinitHandler {
                         config
                     }
                     false => {
-                        app.configuration.preset = app
+                        app.configuration.active.preset = app
                             .mirror
                             .render
                             .shared_rendering
@@ -854,14 +876,14 @@ impl ApplicationHandler<()> for WinitHandler {
 
                 should_update = true;
 
-                app.configuration.should_define_new_preset = false;
+                app.configuration.active.should_define_new_preset = false;
             }
 
             if should_update {
                 app.external
                     .channels
                     .gpu_sender_request
-                    .send(app.configuration.clone())
+                    .send(app.configuration.active.clone())
                     .unwrap();
             }
         }
@@ -909,13 +931,13 @@ impl ApplicationHandler<()> for WinitHandler {
         }
 
         if app.app_state.intricate_todo_refactor.new_settings {
-            if let TitleBarDisplay::TitleBarVisible = &app.configuration.display_title {
+            if let TitleBarDisplay::TitleBarVisible = &app.configuration.active.display_title {
                 app.systems.window.set_decorations(true);
             } else {
                 app.systems.window.set_decorations(false);
             }
 
-            match &app.configuration.window_interactions {
+            match &app.configuration.active.window_interactions {
                 crate::ui_state::WindowInteractions::Interactable => {
                     let _ = app.systems.window.set_cursor_hittest(true);
                 }

@@ -1,7 +1,9 @@
 use crate::{
     global_application_state::{
-        CpuFrame, DmaFrame, FRAME_TRANSFER, FrameData, FrameLayout, LastReported, SAFE_MODE,
+        CpuFrame, DmaFrame, FPS_TRACKING, FRAME_TRANSFER, FrameData, FrameLayout, LastReported,
+        SAFE_MODE,
     },
+    gpu_mirror_display::state::{FpsTracker, FpsTrackerOrigin},
     stream_creation::{
         pipewire_dbus::{
             CursorMode, FreeDesktopPipewireWindowStream, GnomePipewireWindowStream, PipewireStream,
@@ -19,21 +21,118 @@ use mmap::MapOption;
 use pipewire::{
     self as pw,
     spa::{buffer::DataType, pod::PropertyFlags},
+    stream::StreamRef,
 };
 use pw::{properties::properties, spa};
 use smithay::reexports::ash::vk::Format;
 use std::{
     collections::HashMap,
-    os::{
-        fd::{FromRawFd, OwnedFd},
-        raw::c_int,
-    },
+    env,
+    ops::Deref,
+    os::raw::c_int,
     sync::{Arc, Mutex, mpsc},
     time::{Duration, SystemTime},
 };
 
-pub struct StreamData {
+pub struct StoredBufferData<'a> {
+    fd: Option<i64>,
+    frame: Arc<LastReported>,
+    buffer: pipewire::buffer::Buffer<'a>,
+}
+
+pub struct MapStorage<'a, 'b: 'a> {
+    pub stream_ref: &'a StreamRef,
+    pub active_buffers: Vec<StoredBufferData<'b>>,
+}
+
+fn not_queued_buffers<'a, 'b>(s: &mut StreamData<MapStorage<'a, 'b>>) -> isize {
+    s.stream.active_buffers.len() as isize
+}
+
+fn if_high_dequeued_buffer_count<'a, 'b>(
+    total_buffers: Arc<
+        Mutex<HashMap<i64, std::sync::Arc<smithay::backend::allocator::dmabuf::Dmabuf>>>,
+    >,
+    dequeued_buffers: &mut StreamData<MapStorage<'a, 'b>>,
+) {
+    {
+        let buffer_count = || total_buffers.lock().unwrap().len() as isize;
+
+        let mut not_queued = not_queued_buffers(dequeued_buffers);
+        let mut queued = buffer_count();
+
+        if !(not_queued < queued) {
+            let text = format!("not queued: {}, max queue size: {}", not_queued, queued);
+
+            println!("{text}");
+
+            println!(
+                "The dequeued buffer count is equal to or greater than the buffer count. Attempting to drop buffers."
+            );
+
+            let mut attempts = 0;
+
+            {
+                'drop_attempt: while !(not_queued < queued) {
+                    drop_inactive_buffers(dequeued_buffers);
+
+                    not_queued = not_queued_buffers(dequeued_buffers);
+                    queued = buffer_count();
+
+                    if queued <= 2 {
+                        println!(
+                            "The queued buffer count is less than 2, so we're not going to wait anymore"
+                        );
+                        break 'drop_attempt;
+                    }
+
+                    attempts += 1;
+
+                    if attempts > 100 {
+                        println!(
+                            "Failed to drop after 100 attempts. Returning control to pipewire and hoping it allocates more buffers."
+                        );
+                        break 'drop_attempt;
+                    }
+                }
+            }
+
+            println!("There was success in dropping buffers.");
+        }
+    }
+}
+
+fn drop_inactive_buffers(storage: &mut StreamData<MapStorage<'_, '_>>) {
+    // Drop buffers to queue them back to pipewire if it is detected no other threads
+    // contain the active DmaBuffer.
+    {
+        let mut new = Vec::new();
+        std::mem::swap(&mut storage.stream.active_buffers, &mut new);
+
+        for StoredBufferData { fd, frame, buffer } in new {
+            match Arc::try_unwrap(frame) {
+                // There are no active copies of the DmaBuffer.
+                Ok(_) => {
+                    // Just to be explicit.
+                    //
+                    // This causes the buffer to be queued back to pipewire.
+                    std::mem::drop(buffer);
+                }
+                Err(frame) => {
+                    storage.stream.active_buffers.push(StoredBufferData {
+                        fd,
+                        frame: frame,
+                        buffer,
+                    });
+                }
+            }
+        }
+    }
+}
+
+pub struct StreamData<T> {
     pub format: spa::param::video::VideoInfoRaw,
+    pub stream: T,
 }
 
 fn define_fake_window() -> gnome_window_calls::abstraction::Window {
@@ -352,10 +451,6 @@ pub fn start_mirroring(
     let context = pw::context::Context::new(&mainloop).unwrap();
     let core = context.connect(None).unwrap();
 
-    let meta = StreamData {
-        format: Default::default(),
-    };
-
     let stream = pw::stream::Stream::new(
         &core,
         "video-test",
@@ -366,6 +461,20 @@ pub fn start_mirroring(
         },
     )
     .unwrap();
+
+    let for_store: &StreamRef = stream.deref();
+
+    let map = Vec::new();
+
+    let testing = MapStorage {
+        stream_ref: for_store,
+        active_buffers: map,
+    };
+
+    let meta = StreamData {
+        format: Default::default(),
+        stream: testing,
+    };
 
     let mut last_known_window_dimensions = WindowDimensionsData {
         x: window.cache.x.unwrap_or(0) as i64,
@@ -451,7 +560,19 @@ pub fn start_mirroring(
         .to_vec(),
     };
 
+    let should_track_fps = env::var(FPS_TRACKING).is_ok();
     let state_change_pod_values = without_dma_modifiers.clone();
+    let mut fps_tracker = FpsTracker::new(
+        Some(FpsTrackerOrigin::Pipewire),
+        Some(vec![
+            Duration::from_secs(1),
+            Duration::from_secs(15),
+            Duration::from_secs(60),
+            Duration::from_secs(60 * 5),
+            Duration::from_secs(60 * 15),
+            Duration::from_secs(60 * 60),
+        ]),
+    );
 
     let _listener = stream
         .add_local_listener_with_user_data(meta)
@@ -463,15 +584,42 @@ pub fn start_mirroring(
 
             println!("buffer with fd '{}' added", buff_fd);
         })
-        .remove_buffer(move |_, _, pw| unsafe {
-            let temp = &*pw;
-            let temp = &*temp.buffer;
-            let temp = &*temp.datas;
-            let buff_fd = temp.fd;
+        .remove_buffer(move |_, storage, pw| {
+            unsafe {
+                let temp = &*pw;
+                let temp = &*temp.buffer;
+                let temp = &*temp.datas;
+                let buff_fd = temp.fd;
 
-            println!("buffer with fd '{}' removed", buff_fd);
+                println!("buffer with fd '{}' removed", buff_fd);
 
-            let _ = remove_buffer_copy.lock().unwrap().remove(&buff_fd);
+                // The shutdown panics if the buffers are not removed from memory
+                // when the shutdown is requested. This still doesn't seem correct
+                // because this can leave an active DmaBuffer with an active file
+                // descriptor open.
+                //
+                // It does seem to fix the panic... but maybe it's UB? I don't know.
+                {
+                    if let Some((idx, _)) =
+                        storage
+                            .stream
+                            .active_buffers
+                            .iter()
+                            .enumerate()
+                            .find(|(_, buffer)| {
+                                if let Some(id) = buffer.fd {
+                                    id == buff_fd
+                                } else {
+                                    false
+                                }
+                            })
+                    {
+                        storage.stream.active_buffers.remove(idx);
+                    }
+                }
+
+                let _ = remove_buffer_copy.lock().unwrap().remove(&buff_fd);
+            }
         })
         .state_changed(move |stream_ref, _, old, new| {
             match stream_ref.state() {
@@ -508,7 +656,7 @@ pub fn start_mirroring(
 
             println!("State changed: {:?} -> {:?}", old, new);
         })
-        .param_changed(move |_, meta, id, param| {
+        .param_changed(move |_, storage, id, param| {
             let Some(param) = param else {
                 return;
             };
@@ -529,31 +677,32 @@ pub fn start_mirroring(
                 return;
             }
 
-            meta.format
+            storage
+                .format
                 .parse(param)
                 .expect("Failed to parse param changed to VideoInfoRaw");
 
             let temp = PredictedWgpuFrameFormat {
-                format: guess_best_texture_format(meta.format.format()),
-                width: meta.format.size().width,
-                height: meta.format.size().height,
+                format: guess_best_texture_format(storage.format.format()),
+                width: storage.format.size().width,
+                height: storage.format.size().height,
             };
 
             let _ = dbus_channels.predicted_frame_fmt_sender.send(temp);
 
             println!(
                 "Video Format: {} ({:?})",
-                meta.format.format().as_raw(),
-                meta.format.format()
+                storage.format.format().as_raw(),
+                storage.format.format()
             );
 
             println!(
                 "Size: {}x{}",
-                meta.format.size().width,
-                meta.format.size().height
+                storage.format.size().width,
+                storage.format.size().height
             );
 
-            let new_wh = (meta.format.size().width, meta.format.size().height);
+            let new_wh = (storage.format.size().width, storage.format.size().height);
 
             if let Some(old_wh) = last_format_dimensions {
                 if new_wh != old_wh {
@@ -562,8 +711,12 @@ pub fn start_mirroring(
                 }
             }
         })
-        .process(move |stream, meta| {
-            let new_wh = Some((meta.format.size().width, meta.format.size().height));
+        .process(move |_, storage| {
+            drop_inactive_buffers(storage);
+
+            let mut buffer_fd_id_opt = None;
+
+            let new_wh = Some((storage.format.size().width, storage.format.size().height));
             let old_wh = last_format_dimensions;
 
             if new_wh != old_wh {
@@ -575,282 +728,338 @@ pub fn start_mirroring(
                 last_format_dimensions = new_wh;
             }
 
-            match stream.dequeue_buffer() {
-                None => println!("out of buffers"),
-                Some(mut buffer) => {
-                    let buffer_data: &mut [spa::buffer::Data] = buffer.datas_mut();
+            let mut buffer = None;
 
-                    if buffer_data.len() == 0 || buffer_data.is_empty() {
-                        return;
+            if let Some(buf) = storage.stream.stream_ref.dequeue_buffer() {
+                buffer = Some(buf);
+            }
+
+            if buffer.is_none() {
+                println!("out of buffers");
+                return;
+            }
+
+            let mut buffer_for_storage = buffer.unwrap();
+
+            {
+                if should_track_fps {
+                    fps_tracker.increment();
+
+                    if let Ok(_) = dbus_channels.fps_request.try_recv() {
+                        println!(
+                            "------------------------------------------------------------------"
+                        );
+                        println!("{:?}", fps_tracker.report());
                     }
+                }
 
-                    let frame_data = match buffer_data[0].type_() {
-                        DataType::DmaBuf => {
-                            let buffer_fd_id = buffer_data[0].as_raw().fd;
+                let buffer_data: &mut [spa::buffer::Data] = buffer_for_storage.datas_mut();
 
-                            if buffer_fd_id == -1 {
-                                return;
-                            }
+                if buffer_data.len() == 0 || buffer_data.is_empty() {
+                    return;
+                }
 
-                            let result = {
-                                let buffers = &mut *buffers.lock().unwrap();
+                let frame_data = match buffer_data[0].type_() {
+                    DataType::DmaBuf => {
+                        let buffer_fd_id = buffer_data[0].as_raw().fd;
 
-                                if buffers.contains_key(&buffer_fd_id) {
-                                    buffers.get(&buffer_fd_id).unwrap().clone()
-                                } else {
-                                    let stride = buffer_data[0].chunk().stride();
-                                    let size = buffer_data[0].chunk().size() as i32;
+                        if buffer_fd_id == -1 {
+                            return;
+                        }
 
-                                    let fmt = match meta.format.format().0 {
-                                        // rgbx
-                                        7 => DrmFourcc::Rgba8888,
-                                        // bgrx
-                                        8 => DrmFourcc::Bgra8888,
-                                        // rgba
-                                        11 => DrmFourcc::Rgba8888,
-                                        // bgra
-                                        12 => DrmFourcc::Bgra8888,
-                                        // rgb
-                                        15 => DrmFourcc::Rgba8888,
-                                        // unknown
-                                        0.. => DrmFourcc::Bgra8888,
-                                    };
+                        buffer_fd_id_opt = Some(buffer_fd_id);
 
-                                    let mut builder = smithay_reexports::Dmabuf::builder(
-                                        ((stride / 4) as i32, ((size / 4) / (stride / 4)) as i32),
-                                        // todo: fix format
-                                        fmt,
-                                        drm_fourcc::DrmModifier::from(meta.format.modifier()),
-                                        smithay::backend::allocator::dmabuf::DmabufFlags::empty(),
-                                    );
+                        let result = {
+                            let buffers = &mut *buffers.lock().unwrap();
 
-                                    let mut stride = 0;
-                                    let mut size = 0;
+                            if buffers.contains_key(&buffer_fd_id) {
+                                buffers.get(&buffer_fd_id).unwrap().clone()
+                            } else {
+                                let stride = buffer_data[0].chunk().stride();
+                                let size = buffer_data[0].chunk().size() as i32;
 
-                                    buffer_data.iter().enumerate().for_each(|(idx, plane)| {
+                                let fmt = match storage.format.format().0 {
+                                    // rgbx
+                                    7 => DrmFourcc::Rgba8888,
+                                    // bgrx
+                                    8 => DrmFourcc::Bgra8888,
+                                    // rgba
+                                    11 => DrmFourcc::Rgba8888,
+                                    // bgra
+                                    12 => DrmFourcc::Bgra8888,
+                                    // rgb
+                                    15 => DrmFourcc::Rgba8888,
+                                    // unknown
+                                    0.. => DrmFourcc::Bgra8888,
+                                };
+
+                                let mut builder = smithay_reexports::Dmabuf::builder(
+                                    ((stride / 4) as i32, ((size / 4) / (stride / 4)) as i32),
+                                    // todo: fix format
+                                    fmt,
+                                    drm_fourcc::DrmModifier::from(storage.format.modifier()),
+                                    smithay::backend::allocator::dmabuf::DmabufFlags::empty(),
+                                );
+
+                                let mut stride = 0;
+                                let mut size = 0;
+
+                                let buffer_data: Vec<_> = buffer_data
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(idx, plane)| {
                                         let fd: c_int = plane.as_raw().fd as c_int;
                                         let fd: std::os::fd::RawFd = fd;
-                                        let fd: std::os::fd::OwnedFd =
-                                            unsafe { OwnedFd::from_raw_fd(fd) };
+                                        let borrowed =
+                                            unsafe { std::os::fd::BorrowedFd::borrow_raw(fd) };
+                                        let fd: Result<_, _> = borrowed.try_clone_to_owned();
+
+                                        if fd.is_err() {
+                                            return None;
+                                        }
+
+                                        let fd = fd.unwrap();
 
                                         stride = plane.chunk().stride();
                                         size = plane.chunk().size();
 
-                                        builder.add_plane(
+                                        Some((
                                             fd,
                                             idx as u32,
                                             plane.chunk().offset() as u32,
                                             plane.chunk().stride() as u32,
-                                        );
-                                    });
+                                        ))
+                                    })
+                                    .collect();
 
-                                    let result: Option<smithay_reexports::Dmabuf> = builder.build();
+                                if buffer_data.iter().any(|v| v.is_none()) {
+                                    println!("error importing dma buffer");
 
-                                    if result.is_none() {
-                                        println!("failed to build dma buffer");
-
-                                        return;
-                                    }
-
-                                    let result = result.unwrap();
-
-                                    let temp = Arc::new(result);
-
-                                    buffers.insert(buffer_fd_id, temp.clone());
-
-                                    temp
+                                    return;
                                 }
-                            };
 
-                            let dma: &Dmabuf = &result;
-                            let dma: Dmabuf = dma.clone();
+                                buffer_data.into_iter().map(|v| v.unwrap()).for_each(
+                                    |(fd, idx, offset, stride)| {
+                                        builder.add_plane(fd, idx, offset, stride);
+                                    },
+                                );
 
-                            let dma = DmaFrame {
-                                frame_data: dma,
+                                let result: Option<smithay_reexports::Dmabuf> = builder.build();
 
-                                // This is set when we lock to update globally
-                                // to avoid accidentlaly overwriting
-                                // data sent from the rendering thread
-                                saved_cpu_frame: None,
-                            };
+                                if result.is_none() {
+                                    println!("failed to build dma buffer");
 
-                            FrameData::DmaBuffers(dma)
-                        }
-
-                        // Everything else is assumed to be CPU data
-                        _ => {
-                            let temp = buffer_data;
-                            let data = temp[0].data();
-
-                            let data = {
-                                if let Some(data) = data {
-                                    data.to_vec()
-                                } else {
-                                    let fd = temp[0].as_raw().fd;
-
-                                    if fd == -1 {
-                                        return;
-                                    }
-
-                                    let chunk = temp[0].as_raw().chunk;
-                                    let chunk = unsafe { &*chunk };
-
-                                    debug_assert_eq!(
-                                        0, chunk.offset,
-                                        "Non-zero chunk offsets are not supported yet"
-                                    );
-
-                                    let data = mmap::MemoryMap::new(
-                                        chunk.size as usize,
-                                        &[
-                                            MapOption::MapReadable,
-                                            MapOption::MapFd(fd as i32),
-                                            MapOption::MapOffset(
-                                                temp[0].as_raw().mapoffset as usize,
-                                            ),
-                                        ],
-                                    );
-
-                                    if data.is_err() {
-                                        if let Err(err) = data {
-                                            println!("{}: {:#?}", "buffer map error", err);
-                                        }
-
-                                        return;
-                                    }
-
-                                    let data_map = data.unwrap();
-                                    let data_array_len = data_map.len();
-                                    let data_ptr = data_map.data() as *const u8;
-
-                                    let data: &[u8] = unsafe {
-                                        std::slice::from_raw_parts(data_ptr, data_array_len)
-                                    };
-
-                                    assert_eq!(data.len(), chunk.size as usize);
-
-                                    data.to_vec()
+                                    return;
                                 }
-                            };
 
-                            let temp = CpuFrame {
-                                frame_data: data,
-                                layout: FrameLayout {
-                                    width: meta.format.size().width as u32,
-                                    height: meta.format.size().height as u32,
-                                    bytes_per_pixel: 4,
-                                },
-                                scan_time: SystemTime::now(),
-                            };
+                                let result = result.unwrap();
 
-                            FrameData::CpuData(temp)
-                        }
-                    };
+                                let temp = Arc::new(result);
 
-                    while let Ok(val) = start_change_scan.try_recv() {
-                        // The other environments scan frames every 5 seconds for now.
-                        if have_gnome_window_handle {
-                            last_known_window_dimensions = val;
+                                buffers.insert(buffer_fd_id, temp.clone());
 
-                            // If the offsets are not reset the requested dimensions can surpass the buffer size.
-                            //
-                            // This happens because the buffer size can be something like exactly 2160x3840 while
-                            // offsets of on the x and y are like (15, 12). This results in requested buffer data
-                            // from (2160+12, 3840+15) which is larger than the buffer.
-                            last_known_offsets = (0, 0);
-                        }
-
-                        // This is no longer used and is set to -1 to immediately start scans.
-                        {
-                            if !first_offset_call {
-                                offset_countdown = Some(-1);
-                            }
-                        }
-
-                        first_offset_call = false;
-                    }
-
-                    // This is no longer used
-                    {
-                        if let Some(count) = &mut offset_countdown {
-                            *count -= 1;
-                        }
-                    }
-
-                    if let Ok(val) = frame_scan_results.try_recv() {
-                        let RealDimensions {
-                            off_x,
-                            off_y,
-                            width,
-                            height,
-                        } = val;
-
-                        last_known_offsets = (off_x, off_y);
-
-                        last_known_window_dimensions.width = width as i64;
-                        last_known_window_dimensions.height = height as i64;
-                    }
-
-                    if let Some(count) = &offset_countdown {
-                        if *count < 0 {
-                            offset_countdown = None;
-
-                            let _ = run_frame_scan.send(FrameScanner::RunScan);
-
-                            /*
-                               There are some slight issues with Gnome's video recorder
-
-                               For fullscreen, non-maximized, non-fullscreen. The window shape is 2160x3840, but pipewire always maxes out at that size. When Gnome
-                               adds it's offsets, it destroys the video frame. This can't be fixed here, and is an upstream problem. This impl goes as
-                               far as possible by detecting incorrectly reported window sizes.
-
-                            */
-                        }
-                    }
-
-                    let temp = LastReported {
-                        window_dimensions: (
-                            last_known_window_dimensions.width as u32,
-                            last_known_window_dimensions.height as u32,
-                        ),
-                        frame_data: Arc::new(frame_data),
-                        last_known_offsets,
-                    };
-
-                    let mut frame = temp;
-
-                    {
-                        let mut lock = FRAME_TRANSFER.lock().unwrap();
-
-                        let last_saved: Option<Arc<CpuFrame>> = {
-                            match &*lock {
-                                Some(v) => match &*v.frame_data {
-                                    FrameData::CpuData(cpu_frame) => {
-                                        Some(Arc::new(cpu_frame.clone()))
-                                    }
-                                    FrameData::DmaBuffers(dma_frame) => {
-                                        dma_frame.saved_cpu_frame.clone()
-                                    }
-                                },
-                                None => None,
+                                temp
                             }
                         };
 
-                        match { &*frame.frame_data } {
-                            FrameData::DmaBuffers(dma_frame) => {
-                                let temp: &DmaFrame = dma_frame;
-                                let mut temp: DmaFrame = temp.clone();
-                                temp.saved_cpu_frame = last_saved;
+                        let dma: &Dmabuf = &result;
+                        let dma: Dmabuf = dma.clone();
 
-                                frame.frame_data = Arc::new(FrameData::DmaBuffers(temp));
+                        let dma = DmaFrame {
+                            frame_data: dma,
+
+                            // This is set when we lock to update globally
+                            // to avoid accidentlaly overwriting
+                            // data sent from the rendering thread
+                            saved_cpu_frame: None,
+                        };
+
+                        FrameData::DmaBuffers(dma)
+                    }
+
+                    // Everything else is assumed to be CPU data
+                    _ => {
+                        let temp = buffer_data;
+                        let data = temp[0].data();
+
+                        let data = {
+                            if let Some(data) = data {
+                                data.to_vec()
+                            } else {
+                                let fd = temp[0].as_raw().fd;
+
+                                if fd == -1 {
+                                    return;
+                                }
+
+                                let chunk = temp[0].as_raw().chunk;
+                                let chunk = unsafe { &*chunk };
+
+                                debug_assert_eq!(
+                                    0, chunk.offset,
+                                    "Non-zero chunk offsets are not supported yet"
+                                );
+
+                                let data = mmap::MemoryMap::new(
+                                    chunk.size as usize,
+                                    &[
+                                        MapOption::MapReadable,
+                                        MapOption::MapFd(fd as i32),
+                                        MapOption::MapOffset(temp[0].as_raw().mapoffset as usize),
+                                    ],
+                                );
+
+                                if data.is_err() {
+                                    if let Err(err) = data {
+                                        println!("{}: {:#?}", "buffer map error", err);
+                                    }
+
+                                    return;
+                                }
+
+                                let data_map = data.unwrap();
+                                let data_array_len = data_map.len();
+                                let data_ptr = data_map.data() as *const u8;
+
+                                let data: &[u8] =
+                                    unsafe { std::slice::from_raw_parts(data_ptr, data_array_len) };
+
+                                assert_eq!(data.len(), chunk.size as usize);
+
+                                data.to_vec()
                             }
-                            _ => {}
-                        }
+                        };
 
-                        *lock = Some(Arc::new(frame));
+                        let temp = CpuFrame {
+                            frame_data: data,
+                            layout: FrameLayout {
+                                width: storage.format.size().width as u32,
+                                height: storage.format.size().height as u32,
+                                bytes_per_pixel: 4,
+                            },
+                            scan_time: SystemTime::now(),
+                        };
+
+                        FrameData::CpuData(temp)
+                    }
+                };
+
+                while let Ok(val) = start_change_scan.try_recv() {
+                    // The other environments scan frames every 5 seconds for now.
+                    if have_gnome_window_handle {
+                        last_known_window_dimensions = val;
+
+                        // If the offsets are not reset the requested dimensions can surpass the buffer size.
+                        //
+                        // This happens because the buffer size can be something like exactly 2160x3840 while
+                        // offsets of on the x and y are like (15, 12). This results in requested buffer data
+                        // from (2160+12, 3840+15) which is larger than the buffer.
+                        last_known_offsets = (0, 0);
+                    }
+
+                    // This is no longer used and is set to -1 to immediately start scans.
+                    {
+                        if !first_offset_call {
+                            offset_countdown = Some(-1);
+                        }
+                    }
+
+                    first_offset_call = false;
+                }
+
+                // This is no longer used
+                {
+                    if let Some(count) = &mut offset_countdown {
+                        *count -= 1;
                     }
                 }
+
+                if let Ok(val) = frame_scan_results.try_recv() {
+                    let RealDimensions {
+                        off_x,
+                        off_y,
+                        width,
+                        height,
+                    } = val;
+
+                    last_known_offsets = (off_x, off_y);
+
+                    last_known_window_dimensions.width = width as i64;
+                    last_known_window_dimensions.height = height as i64;
+                }
+
+                if let Some(count) = &offset_countdown {
+                    if *count < 0 {
+                        offset_countdown = None;
+
+                        let _ = run_frame_scan.send(FrameScanner::RunScan);
+
+                        /*
+                           There are some slight issues with Gnome's video recorder
+
+                           For fullscreen, non-maximized, non-fullscreen. The window shape is 2160x3840, but pipewire always maxes out at that size. When Gnome
+                           adds it's offsets, it destroys the video frame. This can't be fixed here, and is an upstream problem. This impl goes as
+                           far as possible by detecting incorrectly reported window sizes.
+
+                        */
+                    }
+                }
+
+                let temp = LastReported {
+                    window_dimensions: (
+                        last_known_window_dimensions.width as u32,
+                        last_known_window_dimensions.height as u32,
+                    ),
+                    frame_data: Arc::new(frame_data),
+                    last_known_offsets,
+                };
+
+                let mut frame = temp;
+
+                {
+                    let mut lock = FRAME_TRANSFER.lock().unwrap();
+
+                    let last_saved: Option<Arc<CpuFrame>> = {
+                        match &*lock {
+                            Some(v) => match &*v.frame_data {
+                                FrameData::CpuData(cpu_frame) => Some(Arc::new(cpu_frame.clone())),
+                                FrameData::DmaBuffers(dma_frame) => {
+                                    dma_frame.saved_cpu_frame.clone()
+                                }
+                            },
+                            None => None,
+                        }
+                    };
+
+                    match { &*frame.frame_data } {
+                        FrameData::DmaBuffers(dma_frame) => {
+                            let temp: &DmaFrame = dma_frame;
+                            let mut temp: DmaFrame = temp.clone();
+                            temp.saved_cpu_frame = last_saved;
+
+                            frame.frame_data = Arc::new(FrameData::DmaBuffers(temp));
+                        }
+                        _ => {}
+                    }
+
+                    let frame = Arc::new(frame);
+
+                    let temp = StoredBufferData {
+                        fd: buffer_fd_id_opt,
+                        frame: Arc::clone(&frame),
+                        buffer: buffer_for_storage,
+                    };
+
+                    // don't watch the buffers if they're not DmaBuffers.
+                    if buffer_fd_id_opt.is_some() {
+                        storage.stream.active_buffers.push(temp);
+                    }
+
+                    *lock = Some(frame);
+                }
             }
+
+            if_high_dequeued_buffer_count(buffers.clone(), storage);
         })
         .register()
         .unwrap();

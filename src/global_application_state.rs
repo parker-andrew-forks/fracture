@@ -1,18 +1,171 @@
+use crate::{
+    gpu_mirror_display::defaults::{FP_ID, PRESENT_PREFERENCES},
+    ui_state::LoadedProfiles,
+};
 use detect_desktop_environment::DesktopEnvironment;
 use lamco_wgpu::smithay_reexports::Dmabuf;
 use std::{
+    io::{Read, Write},
+    path::PathBuf,
     sync::{Arc, LazyLock, Mutex},
     time::SystemTime,
 };
-
-use crate::gpu_mirror_display::defaults::PRESENT_PREFERENCES;
 
 pub static FRAME_TRANSFER: LazyLock<Mutex<Option<Arc<LastReported>>>> =
     LazyLock::new(|| Mutex::new(None));
 
 pub const SAFE_MODE: &'static str = "SAFE_MODE";
+pub const FPS_TRACKING: &'static str = "FPS_TRACKING";
 
-pub const VERSION: &'static str = "0.0.6";
+pub const VERSION: &'static str = "0.0.7";
+
+pub const CONFIG_FOLDER: LazyLock<PathBuf> = LazyLock::new(|| {
+    let mut path =
+        std::env::home_dir().unwrap_or(std::env::current_dir().unwrap_or("/home".into()));
+
+    path.push(".var/app");
+    path.push(FP_ID);
+    path.push("config/fracture");
+
+    path
+});
+
+pub const FRACTURE_PROFILE_FILENAME: &'static str = "profiles.json";
+
+#[derive(Debug)]
+pub enum ProfileLoadingErr {
+    DirectoryCreation(std::io::Error),
+    ReadErr(std::io::Error),
+    InvalidFormat(serde_json::Error),
+    CreateNew(std::io::Error),
+    WriteErr(std::io::Error),
+    EmptyList,
+}
+
+pub fn profiles_filepath() -> PathBuf {
+    let mut path = CONFIG_FOLDER.clone();
+
+    path.push(FRACTURE_PROFILE_FILENAME);
+
+    path
+}
+
+#[derive(Debug)]
+pub enum ProfileSavingErr {
+    FileCreationErr(ProfileLoadingErr),
+    Serialization(serde_json::Error),
+    FileOpenErr(std::io::Error),
+    FileWriteErr(std::io::Error),
+}
+
+#[derive(Debug)]
+pub enum ProfileResetErr {
+    FileDeletionErr(std::io::Error),
+    SaveErr(ProfileSavingErr),
+}
+
+pub fn reset_profiles(from_loaded: LoadedProfiles) -> Result<(), ProfileResetErr> {
+    let path = profiles_filepath();
+
+    let res: Result<(), std::io::Error> = std::fs::remove_file(&path);
+
+    match res {
+        Ok(_) => match save_profiles(from_loaded) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(ProfileResetErr::SaveErr(e)),
+        },
+        Err(e) => Err(ProfileResetErr::FileDeletionErr(e)),
+    }
+}
+
+pub fn save_profiles(mut from_loaded: LoadedProfiles) -> Result<(), ProfileSavingErr> {
+    let file_verification = load_profiles();
+
+    match file_verification {
+        Ok(_) => {
+            if from_loaded.profiles.len() == 0 {
+                from_loaded.profiles = vec![Default::default()];
+            }
+
+            let path = profiles_filepath();
+
+            match std::fs::File::create(&path) {
+                Ok(mut file) => {
+                    let serde = serde_json::to_string_pretty(&from_loaded);
+
+                    if serde.is_err() {
+                        return Err(ProfileSavingErr::Serialization(serde.unwrap_err()));
+                    }
+
+                    let serde = serde.unwrap();
+
+                    match file.write_all(&serde.as_bytes()) {
+                        Ok(_) => return Ok(()),
+                        Err(e) => Err(ProfileSavingErr::FileWriteErr(e)),
+                    }
+                }
+                Err(e) => Err(ProfileSavingErr::FileOpenErr(e)),
+            }
+        }
+        Err(e) => Err(ProfileSavingErr::FileCreationErr(e)),
+    }
+}
+
+pub fn load_profiles() -> Result<LoadedProfiles, ProfileLoadingErr> {
+    let mut path = CONFIG_FOLDER.clone();
+
+    let res = std::fs::create_dir_all(&path);
+
+    let Ok(()) = res else {
+        return Err(ProfileLoadingErr::DirectoryCreation(res.unwrap_err()));
+    };
+
+    path = profiles_filepath();
+
+    match std::fs::File::open(&path) {
+        Ok(mut file) => {
+            let mut data = String::new();
+
+            let res: Result<usize, std::io::Error> = file.read_to_string(&mut data);
+
+            let Ok(_) = res else {
+                return Err(ProfileLoadingErr::ReadErr(res.unwrap_err()));
+            };
+
+            let res: Result<LoadedProfiles, serde_json::Error> = serde_json::from_str(&data);
+
+            let Ok(val) = res else {
+                return Err(ProfileLoadingErr::InvalidFormat(res.unwrap_err()));
+            };
+
+            if val.list().len() == 0 {
+                return Err(ProfileLoadingErr::EmptyList);
+            }
+
+            return Ok(val);
+        }
+
+        Err(_) => {
+            let res: Result<std::fs::File, std::io::Error> = std::fs::File::create_new(&path);
+
+            let Ok(mut file) = res else {
+                return Err(ProfileLoadingErr::CreateNew(res.unwrap_err()));
+            };
+
+            let cfg = LoadedProfiles::default();
+
+            let contents = serde_json::to_string_pretty(&cfg).unwrap();
+
+            let res: Result<(), std::io::Error> = file.write_all(&contents.as_bytes());
+
+            let Ok(_) = res else {
+                return Err(ProfileLoadingErr::WriteErr(res.unwrap_err()));
+            };
+
+            return Ok(cfg);
+        }
+    }
+}
 
 pub static FOUND_VERSION: LazyLock<String> = LazyLock::new(|| {
     if let Ok(v) = reqwest::blocking::get("https://fracture.systems/fracture/VERSION") {
@@ -40,28 +193,6 @@ pub static DESKTOP_ENV_IS_GNOME: LazyLock<bool> =
 
 pub static AVAILABLE_PRESETS: LazyLock<Mutex<Vec<wgpu::PresentMode>>> =
     LazyLock::new(|| Mutex::new(PRESENT_PREFERENCES.to_vec()));
-
-/*
-
-// todo: Add saved defaults.
-
-static DEFUALT_SETTINGS_FILE_PATH: &'static str = "~/.config/default.json";
-
-pub static DEFAULT_SETTINGS: LazyLock<SetUiState> = LazyLock::new(|| {
-    if let Ok(mut file) = std::fs::File::open(DEFUALT_SETTINGS_FILE_PATH) {
-        let mut text = String::new();
-
-        if let Ok(_) = file.read_to_string(&mut text) {
-            let state: Result<SetUiState, _> = serde_json::de::from_str(&text);
-
-            if let Ok(state) = state {
-                return state;
-            }
-        }
-    }
-
-    CreateUiState::default().into()
-}); */
 
 #[derive(Clone, Debug)]
 pub struct FrameLayout {
