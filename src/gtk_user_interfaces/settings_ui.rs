@@ -143,6 +143,8 @@ pub fn run_settings_app(channel: &Rc<RefCell<UiChannelSide>>, state: Rc<RefCell<
                         if let Err(e) = gpu_channel_sender.send(temp) {
                             println!("The receiver for the GPU was dropped: {:?}", e);
                         }
+
+                        let _ = ui.request_new_frame.send(());
                     }
                     state.borrow_mut().updated = false;
                 }
@@ -410,6 +412,46 @@ pub fn rebuild(v: &Rc<RefCell<UiState>>) -> gtk::Box {
         }
 
         presents.append(&btn);
+    }
+
+    let render_modes = gtk::Box::builder()
+        .valign(gtk4::Align::Start)
+        .spacing(10)
+        .orientation(gtk4::Orientation::Horizontal)
+        .build();
+
+    let avail: Vec<RenderMode> = {
+        vec![
+            RenderMode::Continuous,
+            RenderMode::OnPipewireFrame,
+            RenderMode::PredictBestForLowFps,
+        ]
+    };
+
+    for render_mode in avail.iter() {
+        let label = format!("{:?}", render_mode);
+
+        let btn = gtk::ToggleButton::with_label(&label);
+        let v2 = v.clone();
+
+        let re = render_mode.clone();
+
+        btn.connect_clicked(move |_| {
+            let state = v2.clone();
+
+            let mut temp = state.borrow_mut();
+            let temp: &mut UiState = temp.update();
+
+            temp.should_define_new_preset = true;
+
+            temp.render_mode = re.clone();
+        });
+
+        if { v.borrow().render_mode.clone() } == *render_mode {
+            btn.set_active(true);
+        }
+
+        render_modes.append(&btn);
     }
 
     let hittest = gtk::Box::builder()
@@ -1331,6 +1373,9 @@ pub fn rebuild(v: &Rc<RefCell<UiState>>) -> gtk::Box {
     base.append(&gtk::Label::new("Presents".into()));
     base.append(&presents);
 
+    base.append(&gtk::Label::new("RenderMode".into()));
+    base.append(&render_modes);
+
     if let Err(_) = std::env::var(SAFE_MODE) {
         base.append(&gtk::Label::new("Safe Mode".into()));
 
@@ -1522,6 +1567,7 @@ pub fn rebuild(v: &Rc<RefCell<UiState>>) -> gtk::Box {
             },
             window_interactions: WindowInteractions::Interactable,
             present: Default::default(),
+            render_mode: RenderMode::PredictBestForLowFps,
         };
 
         let mut result = temp.build_new_full_settings_state();
@@ -1683,6 +1729,12 @@ pub fn rebuild(v: &Rc<RefCell<UiState>>) -> gtk::Box {
         .orientation(gtk4::Orientation::Horizontal)
         .build();
 
+    let profile_box_r2 = gtk::Box::builder()
+        .valign(gtk4::Align::Start)
+        .spacing(10)
+        .orientation(gtk4::Orientation::Horizontal)
+        .build();
+
     let profile_box_r3 = gtk::Box::builder()
         .valign(gtk4::Align::Start)
         .spacing(10)
@@ -1691,12 +1743,16 @@ pub fn rebuild(v: &Rc<RefCell<UiState>>) -> gtk::Box {
 
     let err_text_box = gtk::TextView::builder().visible(false).build();
     profile_box.append(&profile_box_r0);
+
+    let err_text_box2 = gtk::TextView::builder().visible(false).build();
     profile_box.append(&err_text_box);
 
     active_profile_out.append(&active_profile);
 
     profile_box.append(&active_profile_out);
     active_profile.append(&profile_box_r1);
+    active_profile.append(&profile_box_r2);
+    active_profile.append(&err_text_box2);
     active_profile.append(&profile_box_r3);
 
     let profiles_loaded = load_profiles();
@@ -1790,11 +1846,11 @@ pub fn rebuild(v: &Rc<RefCell<UiState>>) -> gtk::Box {
                 .unwrap_or(&none_text)
                 .as_str();
 
-            let field_val = EntryBuffer::builder().text(temp).build();
+            let name_field_val = EntryBuffer::builder().text(temp).build();
 
             let name_entry = gtk::Entry::builder()
                 .name("Name")
-                .buffer(&field_val)
+                .buffer(&name_field_val)
                 .build();
 
             profile_box_r1.append(&name_entry);
@@ -1883,6 +1939,210 @@ pub fn rebuild(v: &Rc<RefCell<UiState>>) -> gtk::Box {
             profile_box_r1.append(&down);
             profile_box_r1.append(&up);
 
+            let kbd_def = gtk::Label::builder()
+                .label(&"Keyboard shortcut".to_string())
+                .build();
+
+            profile_box_r2.append(&kbd_def);
+
+            let sp = &selected_profile;
+
+            let mut text = format!("");
+
+            let mut keyboard = gtk::Entry::builder()
+                .name("Keyboard shortcut")
+                .max_width_chars(3)
+                .xalign(0.5);
+            // .buffer(&field_val);
+
+            let mut add_shortcut_label = "Add";
+
+            if let Some(shortcut) = sp.shortcut {
+                text = format!("{shortcut}");
+                add_shortcut_label = "Remove";
+                keyboard = keyboard.sensitive(false);
+            }
+
+            let keyboard_shortcut_field_value = EntryBuffer::builder().text(&text).build();
+
+            keyboard = keyboard.buffer(&keyboard_shortcut_field_value);
+
+            let keyboard = keyboard.build();
+
+            let in_def: RefCell<Option<char>> = RefCell::new(None);
+            let defined: Rc<RefCell<Option<char>>> = Rc::new(RefCell::new(None));
+            let defined_value = defined.clone();
+
+            let temp = profiles.clone();
+
+            keyboard_shortcut_field_value.connect_text_notify(move |s| {
+                let k: String = s.text().into();
+
+                let Some(c) = k.chars().last() else {
+                    *in_def.borrow_mut() = None;
+                    *defined_value.borrow_mut() = None;
+
+                    err_text_box2.set_visible(false);
+
+                    return;
+                };
+
+                let previous_usage = temp.list().iter().enumerate().find(|(_, profile)| {
+                    if let Some(x) = profile.shortcut {
+                        x == c
+                    } else {
+                        false
+                    }
+                });
+
+                if let Some(previous) = previous_usage {
+                    let shortcut = c;
+
+                    let previous = (previous.0, &previous.1.name);
+
+                    let debug = format!(
+                        "The keyboard shortcut {shortcut} has already been used. {}{previous:#?}",
+                        "\r\n\r\n",
+                    );
+
+                    let text_buff = TextBuffer::builder().text(debug).build();
+                    err_text_box2.set_buffer(Some(&text_buff));
+                    err_text_box2.set_visible(true);
+                    err_text_box2.add_css_class("err");
+                } else {
+                    err_text_box2.set_visible(false);
+                }
+
+                match { *in_def.borrow() } {
+                    Some(c2) => {
+                        if c == c2 {
+                            *in_def.borrow_mut() = None;
+                            *defined_value.borrow_mut() = Some(c2);
+                            return;
+                        }
+                    }
+                    None => {
+                        let temp = format!("{c}");
+                        *in_def.borrow_mut() = Some(c);
+                        *defined_value.borrow_mut() = Some(c);
+                        s.set_text(&temp);
+                    }
+                }
+            });
+
+            let add_kbd = gtk::Button::builder().label(add_shortcut_label).build();
+
+            let v2 = v.clone();
+
+            let active: &Profile = sp;
+            let active: Profile = active.clone();
+
+            let def2 = defined.clone();
+
+            add_kbd.connect_clicked(move |_| {
+                let active = &active;
+
+                let mut profiles = load_profiles().unwrap_or(Default::default());
+
+                let idx = (selected_idx as isize).max(0);
+
+                if profiles.profiles.get(selected_idx as usize).is_some() {
+                    match active.shortcut {
+                        Some(_) => {
+                            profiles.profiles[selected_idx as usize].shortcut = None;
+                        }
+                        None => {
+                            let temp = { *def2.borrow() };
+
+                            match temp {
+                                Some(c) => {
+                                    let previous_usage =
+                                        profiles.list().iter().enumerate().find(|(_, profile)| {
+                                            if let Some(x) = profile.shortcut {
+                                                x == c
+                                            } else {
+                                                false
+                                            }
+                                        });
+
+                                    match previous_usage {
+                                        Some(_) => {
+                                            return;
+                                        }
+                                        None => {
+                                            profiles.profiles[selected_idx as usize].shortcut =
+                                                Some(c);
+                                        }
+                                    }
+                                }
+                                None => {
+                                    // profiles.profiles[selected_idx as usize].shortcut = None;
+
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    println!("error loading current profile at idx. attempting to reload profiles");
+                }
+
+                match save_profiles(profiles) {
+                    Ok(_) => {
+                        let mut v2 = v2.borrow_mut();
+                        let state: &mut UiState = v2.update();
+
+                        state.reload_profiles = true;
+                        state.active_profile = idx as usize;
+                    }
+                    Err(e) => {
+                        println!("{:#?}", e);
+                        return;
+                    }
+                }
+            });
+
+            profile_box_r2.append(&keyboard);
+            profile_box_r2.append(&add_kbd);
+
+            let btn = gtk::CheckButton::builder()
+                .label(&"Use in rotation".to_string())
+                .active(selected_profile.in_rotation.unwrap_or(true))
+                .build();
+
+            let v2 = v.clone();
+
+            btn.connect_active_notify(move |checkbox| {
+                let v2 = v2.clone();
+
+                let mut profiles = load_profiles().unwrap_or(Default::default());
+
+                let idx = (selected_idx as isize).max(0);
+
+                if profiles.profiles.get(selected_idx as usize).is_some() {
+                    profiles.profiles[selected_idx as usize].in_rotation =
+                        Some(checkbox.is_active());
+                } else {
+                    println!("error loading current profile at idx. attempting to reload profiles");
+                }
+
+                match save_profiles(profiles) {
+                    Ok(_) => {
+                        let mut v2 = v2.borrow_mut();
+                        let state: &mut UiState = v2.update();
+
+                        state.reload_profiles = true;
+                        state.active_profile = idx as usize;
+                    }
+                    Err(e) => {
+                        println!("{:#?}", e);
+                        return;
+                    }
+                }
+            });
+
+            profile_box_r2.append(&btn);
+
             let load = gtk::Button::builder().label("Load").build();
 
             let v2 = v.clone();
@@ -1907,6 +2167,43 @@ pub fn rebuild(v: &Rc<RefCell<UiState>>) -> gtk::Box {
 
             let v2 = v.clone();
 
+            name_field_val.connect_text_notify(move |val| {
+                let v2 = v2.clone();
+
+                if let Ok(mut loaded) = load_profiles() {
+                    match loaded.profiles.get_mut(selected_idx as usize) {
+                        Some(item) => {
+                            let temp: &mut Profile = item;
+
+                            let data: GString = val.text();
+                            let new_name = format!("{}", data);
+
+                            temp.name = Some(new_name);
+                        }
+                        None => {
+                            println!("failed to index loaded profiles");
+                        }
+                    }
+
+                    match save_profiles(loaded) {
+                        Ok(_) => {
+                            let mut v2 = v2.borrow_mut();
+                            let _: &mut UiState = v2.update_delayed_rebuild();
+                        }
+                        Err(e) => {
+                            println!("{:#?}", e);
+                            return;
+                        }
+                    }
+                } else {
+                    println!("failed to load profiles");
+
+                    return;
+                }
+            });
+
+            let v2 = v.clone();
+
             save.connect_clicked(move |_| {
                 let v2 = v2.clone();
 
@@ -1915,7 +2212,7 @@ pub fn rebuild(v: &Rc<RefCell<UiState>>) -> gtk::Box {
                         Some(item) => {
                             let temp: &mut Profile = item;
 
-                            let data: GString = name_entry.buffer().text();
+                            let data: GString = name_field_val.text();
                             let new_name = format!("{}", data);
 
                             temp.name = Some(new_name);

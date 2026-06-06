@@ -160,6 +160,13 @@ pub fn write_ui_texture_and_handle_ui_actions(
             active_cfg.present = None;
             in_use_profile.present = None;
 
+            // maybe I should add a method to set the defaults... oh well maybe later
+            let ar = active_cfg.render_mode.unwrap_or(Default::default());
+            let iu = in_use_profile.render_mode.unwrap_or(Default::default());
+
+            active_cfg.render_mode = Some(ar);
+            in_use_profile.render_mode = Some(iu);
+
             // trash button
             if in_use_profile != active_cfg {
                 {
@@ -265,29 +272,15 @@ pub fn write_ui_texture_and_handle_ui_actions(
                         &img_position,
                         &binary_images::ICON_DIAMOND_PROFILE_NO_FILL,
                     ) {
-                        app.configuration.profiles = load_profiles().unwrap_or(Default::default());
-                        let profile_list = app.configuration.profiles.list();
-
-                        let next = (idx + 1) % profile_list.len();
-
-                        let next_profile = profile_list
-                            .get(next)
-                            .map(|v| v.clone())
-                            .unwrap_or(profile_list.last().unwrap().clone())
-                            .clone()
-                            .config;
-
-                        let mut as_state: UiState = next_profile.into();
-                        as_state.active_profile = next;
-
-                        app.configuration.active = as_state;
-                        app.app_state.intricate_todo_refactor.new_settings = true;
-
-                        app.external
-                            .channels
-                            .gpu_sender_request
-                            .send(app.configuration.active.clone())
-                            .unwrap();
+                        if app.user_interaction.shift_left_is_down
+                            || app.user_interaction.shift_right_is_down
+                        {
+                            app.configuration
+                                .load_previous_rotation(&mut app.app_state, &app.external);
+                        } else {
+                            app.configuration
+                                .load_next_rotation(&mut app.app_state, &app.external);
+                        }
                     }
                 }
             }

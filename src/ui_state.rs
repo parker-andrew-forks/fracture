@@ -1,8 +1,12 @@
 use std::time::SystemTime;
 
 use crate::{
-    global_application_state::AVAILABLE_PRESETS,
-    gpu_mirror_display::{defaults::CROP_COLOR, postprocessing_shaders::PostprocessingErrors},
+    global_application_state::{AVAILABLE_PRESETS, load_profiles},
+    gpu_mirror_display::{
+        defaults::CROP_COLOR,
+        postprocessing_shaders::PostprocessingErrors,
+        state::{AppState, ExternalControl},
+    },
 };
 use serde::{Deserialize, Serialize};
 use wgpu::PresentMode;
@@ -130,6 +134,156 @@ pub struct AppConfiguration {
     pub profiles: LoadedProfiles,
 }
 
+impl AppConfiguration {
+    /// Wrapping loads the profile at the index. It cannot fail.
+    pub fn load_profile(&mut self, idx: usize, st: &mut AppState, ext: &ExternalControl) {
+        self.profiles = load_profiles().unwrap_or(Default::default());
+        let profile_list = self.profiles.list();
+
+        let target = idx % profile_list.len();
+
+        let next_profile = profile_list
+            .get(target)
+            .map(|v| v.clone())
+            .unwrap_or(profile_list.first().unwrap().clone())
+            .clone()
+            .config;
+
+        let mut as_state: UiState = next_profile.into();
+        as_state.active_profile = target;
+
+        self.active = as_state;
+        st.intricate_todo_refactor.new_settings = true;
+
+        ext.channels
+            .gpu_sender_request
+            .send(self.active.clone())
+            .unwrap();
+    }
+
+    pub fn load_previous_rotation(&mut self, st: &mut AppState, ext: &ExternalControl) {
+        let idx = self.active.active_profile;
+
+        let list = load_profiles().unwrap_or(Default::default());
+        let list2: Vec<_> = list.profiles.iter().enumerate().collect();
+
+        let rotation_profiles: Vec<_> = list2
+            .iter()
+            .filter(|v| v.1.in_rotation.unwrap_or(true))
+            .collect();
+
+        let from_left = rotation_profiles.iter().filter(|v| v.0 < idx).last();
+
+        let selected: (usize, Profile);
+
+        if let Some((idx, prof)) = from_left {
+            let temp: &Profile = prof;
+            let temp: Profile = temp.clone();
+
+            selected = (*idx, temp);
+        } else {
+            selected = rotation_profiles
+                .get(rotation_profiles.len() - 1)
+                .map(|v| (v.0, v.1.clone()))
+                .unwrap_or((0, Default::default()));
+        }
+
+        let temp = selected.0;
+
+        self.load_profile(temp, st, &ext);
+    }
+
+    pub fn load_next_rotation(&mut self, st: &mut AppState, ext: &ExternalControl) {
+        let idx = self.active.active_profile;
+
+        let list = load_profiles().unwrap_or(Default::default());
+        let list2: Vec<_> = list.profiles.iter().enumerate().collect();
+
+        let rotation_profiles: Vec<_> = list2
+            .iter()
+            .filter(|v| v.1.in_rotation.unwrap_or(true))
+            .collect();
+
+        let from_right = rotation_profiles.iter().find(|v| v.0 > idx);
+
+        let selected: (usize, Profile);
+
+        if let Some((idx, prof)) = from_right {
+            let temp: &Profile = prof;
+            let temp: Profile = temp.clone();
+
+            selected = (*idx, temp);
+        } else {
+            selected = rotation_profiles
+                .get(0)
+                .map(|v| (v.0, v.1.clone()))
+                .unwrap_or((0, Default::default()));
+        }
+
+        let temp = selected.0;
+
+        self.load_profile(temp, st, &ext);
+    }
+
+    // Loads a profile included in rotation
+    pub fn load_rotation_profile(
+        &mut self,
+        mut idx: isize,
+        st: &mut AppState,
+        ext: &ExternalControl,
+    ) {
+        self.profiles = load_profiles().unwrap_or(Default::default());
+        let list: Vec<_> = self.profiles.list().iter().enumerate().collect();
+
+        let mut profile_list: Vec<_> = list
+            .iter()
+            .filter(|(_, v)| match v.in_rotation {
+                Some(defined) => defined,
+                None => true,
+            })
+            .collect();
+
+        if profile_list.len() == 0 {
+            profile_list = vec![];
+            profile_list.push(list.first().unwrap());
+        }
+
+        if idx < 0 {
+            let amt = (idx / profile_list.len() as isize).abs() + 1;
+
+            idx += amt * profile_list.len() as isize;
+        }
+
+        let t = idx as usize;
+
+        let target = t % profile_list.len();
+
+        let (selected_idx, _) = profile_list
+            .get(target)
+            .map(|v| *v)
+            .unwrap_or(profile_list.first().unwrap())
+            .clone();
+
+        self.load_profile(selected_idx, st, ext);
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+pub enum RenderMode {
+    /// This has disappointing results. It uses continuous when shaders are used, and OnPipewireFrame otherwise.
+    PredictBestForLowFps,
+    /// If the watched application is less than like 10 FPS, this is desirable.
+    OnPipewireFrame,
+    /// Videos and UI will always work
+    Continuous,
+}
+
+impl Default for RenderMode {
+    fn default() -> Self {
+        RenderMode::Continuous
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct UiState {
     pub display_title: TitleBarDisplay,
@@ -148,6 +302,7 @@ pub struct UiState {
     pub should_define_new_primary_sampler: bool,
     pub window_interactions: WindowInteractions,
     pub preset: wgpu::PresentMode,
+    pub render_mode: RenderMode,
     pub should_define_new_preset: bool,
     pub active_profile: usize,
     pub reload_profiles: bool,
@@ -176,6 +331,7 @@ impl UiState {
             minify_filter: temp.minify_filter,
             window_interactions: temp.window_interactions,
             present: temp.preset,
+            render_mode: temp.render_mode,
         };
 
         temp
@@ -202,6 +358,7 @@ pub struct SetUiState {
     pub minify_filter: wgpu::FilterMode,
     pub window_interactions: WindowInteractions,
     pub present: PresentMode,
+    pub render_mode: RenderMode,
 }
 
 impl Default for SetUiState {
@@ -233,6 +390,7 @@ impl SetUiState {
             minify_filter,
             window_interactions,
             present: preset,
+            render_mode,
         } = temp;
 
         let selected_preset;
@@ -266,6 +424,7 @@ impl SetUiState {
             active_profile: 0,
             reload_profiles: true,
             delayed_uptime_timer: None,
+            render_mode,
         };
 
         if let Some(postprocessor) = &mut temp.postprocessor {
@@ -312,6 +471,7 @@ impl Default for UiState {
             active_profile: 0,
             reload_profiles: true,
             delayed_uptime_timer: None,
+            render_mode: RenderMode::default(),
         }
     }
 }
@@ -352,6 +512,7 @@ pub struct CreateUiState {
     pub minify_filter: Option<wgpu::FilterMode>,
     pub window_interactions: Option<WindowInteractions>,
     pub present: Option<PresentMode>,
+    pub render_mode: Option<RenderMode>,
 }
 
 impl Default for CreateUiState {
@@ -377,6 +538,7 @@ impl Default for CreateUiState {
             active_profile: _,
             reload_profiles: _,
             delayed_uptime_timer: _,
+            render_mode,
         } = UiState::default();
 
         Self {
@@ -392,6 +554,7 @@ impl Default for CreateUiState {
             minify_filter: Some(minify_filter),
             window_interactions: Some(window_interactions),
             present: Some(presets),
+            render_mode: Some(render_mode),
         }
     }
 }
@@ -409,6 +572,7 @@ impl Into<SetUiState> for CreateUiState {
             minify_filter,
             window_interactions,
             present: presets,
+            render_mode,
         } = self;
 
         SetUiState {
@@ -427,6 +591,7 @@ impl Into<SetUiState> for CreateUiState {
             window_interactions: window_interactions
                 .unwrap_or(UiState::default().window_interactions),
             present: presets.unwrap_or(UiState::default().preset),
+            render_mode: render_mode.unwrap_or_default(),
         }
     }
 }
@@ -457,6 +622,7 @@ impl Into<CreateUiState> for SetUiState {
             minify_filter: Some(temp.minify_filter),
             window_interactions: Some(temp.window_interactions),
             present: Some(temp.present),
+            render_mode: Some(temp.render_mode),
         }
     }
 }
@@ -499,11 +665,11 @@ impl Default for Profile {
     fn default() -> Self {
         let cfg: CreateUiState = Default::default();
 
-        // cfg.present = None;
-
         Self {
             name: Some("New Profile".into()),
             config: cfg,
+            shortcut: None,
+            in_rotation: Some(true),
         }
     }
 }
@@ -511,5 +677,7 @@ impl Default for Profile {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Profile {
     pub name: Option<String>,
+    pub shortcut: Option<char>,
+    pub in_rotation: Option<bool>,
     pub config: CreateUiState,
 }
