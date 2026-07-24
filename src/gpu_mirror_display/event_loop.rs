@@ -684,9 +684,6 @@ impl ApplicationHandler<()> for WinitHandler {
             },
         };
 
-        app.configuration.active.should_define_new_preset = true;
-        app.configuration.active.should_define_new_primary_sampler = true;
-
         app.external
             .channels
             .gpu_sender_request
