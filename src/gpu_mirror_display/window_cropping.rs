@@ -243,6 +243,18 @@ pub fn if_in_crop_complete_crop(app: &mut Application, from: CropEndTriggeredFro
                 .gpu_sender_request
                 .send(app.configuration.active.clone())
                 .unwrap();
+
+            // This code isn't very good. When new profiles are loaded, they can have different filters
+            // that aren't expected to change. It was originally expected all changes would be from the settings UI,
+            // but with the addition of profiles, changes to the config can happen from the main application UI.
+            //
+            // This forces a reload of the settings by pretending the application was updated from the settings UI.
+            app.external
+                .channels
+                .new_settings_receiver
+                .1
+                .send(app.configuration.active.clone())
+                .unwrap();
         }
 
         app.app_state.intricate_todo_refactor.in_crop_selection = false;

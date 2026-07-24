@@ -684,6 +684,9 @@ impl ApplicationHandler<()> for WinitHandler {
             },
         };
 
+        app.configuration.active.should_define_new_preset = true;
+        app.configuration.active.should_define_new_primary_sampler = true;
+
         app.external
             .channels
             .gpu_sender_request
@@ -736,7 +739,7 @@ impl ApplicationHandler<()> for WinitHandler {
             }
         }
 
-        while let Ok(new) = app.external.channels.new_settings_receiver.try_recv() {
+        while let Ok(new) = app.external.channels.new_settings_receiver.0.try_recv() {
             // This is expensive, but needs to happen or the image will become distorted. [2]
             if !app
                 .app_state

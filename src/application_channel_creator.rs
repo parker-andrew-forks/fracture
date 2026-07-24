@@ -14,7 +14,7 @@ pub struct ApplicationChannelsCreator;
 
 pub struct GpuChannelSide {
     pub start_settings_ui: std::sync::mpsc::Sender<()>,
-    pub new_settings_receiver: std::sync::mpsc::Receiver<UiState>,
+    pub new_settings_receiver: (std::sync::mpsc::Receiver<UiState>, std::sync::mpsc::Sender<UiState>),
     pub gpu_sender_request: std::sync::mpsc::Sender<UiState>,
     pub predicted_frame_fmt_receiver: std::sync::mpsc::Receiver<PredictedWgpuFrameFormat>,
     pub terminate_pipewire_stream: pipewire::channel::Sender<()>,
@@ -61,6 +61,9 @@ impl ApplicationChannelsCreator {
     pub fn channels() -> (GpuChannelSide, UiChannelSide, DbusSide) {
         let (s1, r1) = std::sync::mpsc::channel::<_>();
         let (s2, r2) = std::sync::mpsc::channel::<_>();
+
+        let s2_copy = s2.clone();
+
         let (s3, r3) = std::sync::mpsc::channel::<_>();
         let (s4, r4) = std::sync::mpsc::channel::<_>();
         let (s5, r5) = pipewire::channel::channel::<_>();
@@ -79,7 +82,7 @@ impl ApplicationChannelsCreator {
         (
             GpuChannelSide {
                 start_settings_ui: s1,
-                new_settings_receiver: r2,
+                new_settings_receiver: (r2, s2_copy),
                 gpu_sender_request: s3,
                 predicted_frame_fmt_receiver: r4,
                 terminate_pipewire_stream: s5,

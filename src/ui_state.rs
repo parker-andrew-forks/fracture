@@ -159,6 +159,17 @@ impl AppConfiguration {
             .gpu_sender_request
             .send(self.active.clone())
             .unwrap();
+
+        // This code isn't very good. When new profiles are loaded, they can have different filters
+        // that aren't expected to change. It was originally expected all changes would be from the settings UI,
+        // but with the addition of profiles, changes to the config can happen from the main application UI.
+        //
+        // This forces a reload of the settings by pretending the application was updated from the settings UI.
+        ext.channels
+            .new_settings_receiver
+            .1
+            .send(self.active.clone())
+            .unwrap();
     }
 
     pub fn load_previous_rotation(&mut self, st: &mut AppState, ext: &ExternalControl) {
